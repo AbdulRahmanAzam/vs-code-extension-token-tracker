@@ -12,7 +12,7 @@ const {
 
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || '';
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || '';
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const FRONTEND_URL = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/+$/, '');
 
 /**
  * POST /api/auth/register
@@ -495,7 +495,9 @@ router.get('/github/login', (req, res) => {
   if (!GITHUB_CLIENT_ID) {
     return res.status(500).json({ error: 'GitHub OAuth is not configured on the server.' });
   }
-  const redirectUri = `${req.protocol}://${req.get('host')}/api/auth/github/callback`;
+  // Always use https in production (behind reverse proxy, req.protocol may be 'http')
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  const redirectUri = `${protocol}://${req.get('host')}/api/auth/github/callback`;
   const scope = 'read:user user:email';
   const url = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}`;
   res.redirect(url);
