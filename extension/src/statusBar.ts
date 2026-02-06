@@ -9,10 +9,18 @@ export class StatusBarManager {
 
   constructor() {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    this.item.command = 'tokenTracker.showBalance';
-    this.item.tooltip = 'Click to view token details';
+    this.item.command = 'tokenTracker.enterKey';
+    this.item.tooltip = 'Click to enter your Token Key';
     this.item.show();
-    this.setLoading();
+    this.setNotActivated();
+  }
+
+  /** Show not-activated state — needs token key */
+  setNotActivated(): void {
+    this.item.text = '$(key) Token Tracker';
+    this.item.tooltip = 'Click to enter your Token Key';
+    this.item.command = 'tokenTracker.enterKey';
+    this.item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
   }
 
   /** Show loading state */
@@ -25,6 +33,7 @@ export class StatusBarManager {
   update(used: number, allocated: number, isBlocked: boolean): void {
     const remaining = allocated - used;
     this.item.text = `$(credit-card) ${remaining}/${allocated} tokens`;
+    this.item.command = 'tokenTracker.showBalance';
 
     if (isBlocked) {
       this.item.text = `$(error) BLOCKED`;

@@ -1,19 +1,14 @@
 import * as vscode from 'vscode';
 
-interface UserData {
-  email: string;
-  displayName: string;
-  role: string;
-}
-
 interface CachedData {
-  // User auth
-  userToken: string;
-  user: UserData;
+  // Token key used to activate
+  tokenKey: string;
+  ownerName: string;
 
-  // Device
+  // Device credentials (from redeem-key API)
   deviceId: string;
   deviceToken: string;
+  deviceName: string;
   fingerprint: string;
 
   // Balance
@@ -29,7 +24,7 @@ const CACHE_KEY = 'tokenTracker.cache';
 
 /**
  * Local cache for offline resilience.
- * Stores user auth + device credentials + last known balance in VS Code globalState.
+ * Stores token key + device credentials + last known balance in VS Code globalState.
  */
 export class Cache {
   private context: vscode.ExtensionContext;
@@ -48,61 +43,41 @@ export class Cache {
     return this.context.globalState.get<CachedData>(CACHE_KEY);
   }
 
-  /** Check if we have a user token */
-  isLoggedIn(): boolean {
+  /** Check if the extension is activated with a token key */
+  isActivated(): boolean {
     const cached = this.load();
-    return !!(cached?.userToken);
+    return !!(cached?.deviceId && cached?.deviceToken && cached?.tokenKey);
   }
 
-  /** Check if device is linked */
-  hasDeviceCredentials(): boolean {
-    const cached = this.load();
-    return !!(cached?.deviceId && cached?.deviceToken);
+  /** Get the token key used to activate */
+  getTokenKey(): string | undefined {
+    return this.load()?.tokenKey;
   }
 
-  /** Get cached user info */
-  getUser(): UserData | undefined {
-    return this.load()?.user;
-  }
-
-  /** Get user token */
-  getUserToken(): string | undefined {
-    return this.load()?.userToken;
-  }
-
-  /** Save user auth data (after login/register) */
-  saveUserAuth(userToken: string, user: UserData): void {
-    const cached = this.load();
-    if (cached) {
-      cached.userToken = userToken;
-      cached.user = user;
-      this.save(cached);
-    } else {
-      this.save({
-        userToken,
-        user,
-        deviceId: '',
-        deviceToken: '',
-        fingerprint: '',
-        allocated: 0,
-        used: 0,
-        remaining: 0,
-        month: '',
-        isBlocked: false,
-        lastSynced: 0,
-      });
-    }
-  }
-
-  /** Save device credentials after linking */
-  saveDeviceLink(deviceId: string, deviceToken: string, fingerprint: string): void {
-    const cached = this.load();
-    if (cached) {
-      cached.deviceId = deviceId;
-      cached.deviceToken = deviceToken;
-      cached.fingerprint = fingerprint;
-      this.save(cached);
-    }
+  /** Save activation data after redeeming a token key */
+  saveActivation(
+    tokenKey: string,
+    ownerName: string,
+    deviceId: string,
+    deviceToken: string,
+    deviceName: string,
+    fingerprint: string,
+    allocation: { allocated: number; used: number; remaining: number },
+  ): void {
+    this.save({
+      tokenKey,
+      ownerName,
+      deviceId,
+      deviceToken,
+      deviceName,
+      fingerprint,
+      allocated: allocation.allocated,
+      used: allocation.used,
+      remaining: allocation.remaining,
+      month: '',
+      isBlocked: false,
+      lastSynced: Date.now(),
+    });
   }
 
   /** Update only balance fields */
@@ -148,7 +123,7 @@ export class Cache {
     return Date.now() - cached.lastSynced;
   }
 
-  /** Clear all cached data (logout) */
+  /** Clear all cached data (deactivate) */
   clear(): void {
     this.context.globalState.update(CACHE_KEY, undefined);
   }

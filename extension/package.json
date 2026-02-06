@@ -36,6 +36,10 @@
   "contributes": {
     "commands": [
       {
+        "command": "tokenTracker.enterKey",
+        "title": "Token Tracker: Enter Token Key"
+      },
+      {
         "command": "tokenTracker.showBalance",
         "title": "Token Tracker: Show Balance"
       },
@@ -48,12 +52,8 @@
         "title": "Token Tracker: Show Usage History"
       },
       {
-        "command": "tokenTracker.login",
-        "title": "Token Tracker: Sign In / Register"
-      },
-      {
-        "command": "tokenTracker.logout",
-        "title": "Token Tracker: Sign Out"
+        "command": "tokenTracker.deactivate",
+        "title": "Token Tracker: Remove Token Key & Reset"
       },
       {
         "command": "tokenTracker.configure",
@@ -65,7 +65,7 @@
       "properties": {
         "tokenTracker.serverUrl": {
           "type": "string",
-          "default": "https://api.abdulrahmanazam.me",
+          "default": "https://tokentrackerbackend.abdulrahmanazam.me",
           "description": "URL of the central token tracking server. Only change if self-hosting."
         },
         "tokenTracker.enabled": {

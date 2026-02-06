@@ -51,7 +51,7 @@ export class TokenTracker {
         balance.allocated,
         balance.used,
         balance.remaining,
-        balance.month,
+        balance.month || '',
         balance.is_blocked,
       );
       this.statusBar.update(balance.used, balance.allocated, balance.is_blocked);
