@@ -4,21 +4,39 @@ const API_BASE = (import.meta.env.VITE_API_URL || '') + '/api';
 
 class Api {
   constructor() {
-    this.token = localStorage.getItem('admin_token') || null;
+    this.token = localStorage.getItem('tt_token') || null;
+    this.user = JSON.parse(localStorage.getItem('tt_user') || 'null');
   }
 
-  setToken(token) {
+  setAuth(token, user) {
     this.token = token;
-    localStorage.setItem('admin_token', token);
+    this.user = user;
+    localStorage.setItem('tt_token', token);
+    localStorage.setItem('tt_user', JSON.stringify(user));
   }
 
-  clearToken() {
+  clearAuth() {
     this.token = null;
+    this.user = null;
+    localStorage.removeItem('tt_token');
+    localStorage.removeItem('tt_user');
     localStorage.removeItem('admin_token');
   }
 
   isAuthenticated() {
     return !!this.token;
+  }
+
+  getUser() {
+    return this.user;
+  }
+
+  isAdmin() {
+    return this.user?.role === 'admin';
+  }
+
+  getGitHubLoginUrl() {
+    return `${API_BASE}/auth/github/login`;
   }
 
   async request(method, path, body = null) {
@@ -37,8 +55,8 @@ class Api {
 
     if (!res.ok) {
       if (res.status === 401) {
-        this.clearToken();
-        window.location.reload();
+        this.clearAuth();
+        window.location.href = '/login';
       }
       throw new Error(data.error || 'Request failed');
     }
@@ -47,17 +65,57 @@ class Api {
   }
 
   // ─── Auth ─────────────────────
-  login(username, password) {
+  register(email, password, display_name, invite_token) {
+    return this.request('POST', '/auth/register', { email, password, display_name, invite_token });
+  }
+
+  login(email, password) {
+    return this.request('POST', '/auth/login', { email, password });
+  }
+
+  adminLogin(username, password) {
     return this.request('POST', '/admin/login', { username, password });
   }
 
-  // ─── Dashboard ────────────────
-  getDashboard() {
+  // ─── User Dashboard ──────────
+  getUserDashboard() {
+    return this.request('GET', '/user/dashboard');
+  }
+
+  generateTokenKey(label, allocated_tokens, expires_days) {
+    return this.request('POST', '/user/generate-key', { label, allocated_tokens, expires_days });
+  }
+
+  deleteTokenKey(keyId) {
+    return this.request('DELETE', `/user/keys/${keyId}`);
+  }
+
+  setDeviceAllocation(deviceId, allocated_tokens) {
+    return this.request('PUT', `/user/devices/${deviceId}/allocation`, { allocated_tokens });
+  }
+
+  blockDevice(deviceId, blocked) {
+    return this.request('PUT', `/user/devices/${deviceId}/block`, { blocked });
+  }
+
+  renameDevice(deviceId, name) {
+    return this.request('PUT', `/user/devices/${deviceId}/rename`, { name });
+  }
+
+  deleteDevice(deviceId) {
+    return this.request('DELETE', `/user/devices/${deviceId}`);
+  }
+
+  getDeviceHistory(deviceId) {
+    return this.request('GET', `/user/devices/${deviceId}/history`);
+  }
+
+  // ─── Admin (for admin role users) ────
+  getAdminDashboard() {
     return this.request('GET', '/admin/dashboard');
   }
 
-  // ─── Users ────────────────────
-  getUsers() {
+  getAdminUsers() {
     return this.request('GET', '/admin/users');
   }
 
@@ -69,7 +127,6 @@ class Api {
     return this.request('DELETE', `/admin/users/${userId}`);
   }
 
-  // ─── Invite Tokens ────────────
   getInvites() {
     return this.request('GET', '/admin/invites');
   }
@@ -78,7 +135,7 @@ class Api {
     return this.request('POST', '/admin/invites', {
       monthly_budget: monthlyBudget,
       max_devices: maxDevices,
-      expires_in_days: expiresInDays,
+      expires_days: expiresInDays,
     });
   }
 
@@ -86,60 +143,6 @@ class Api {
     return this.request('DELETE', `/admin/invites/${inviteId}`);
   }
 
-  // ─── Devices ──────────────────
-  getDevices() {
-    return this.request('GET', '/admin/devices');
-  }
-
-  blockDevice(deviceId, blocked) {
-    return this.request('POST', '/admin/block-device', { device_id: deviceId, blocked });
-  }
-
-  deleteDevice(deviceId) {
-    return this.request('DELETE', `/admin/devices/${deviceId}`);
-  }
-
-  renameDevice(deviceId, newName) {
-    return this.request('POST', '/admin/rename-device', { device_id: deviceId, new_name: newName });
-  }
-
-  // ─── Tokens ───────────────────
-  allocateTokens(deviceId, tokens, fromDeviceId = null, reason = '') {
-    return this.request('POST', '/admin/allocate', {
-      device_id: deviceId,
-      tokens,
-      from_device_id: fromDeviceId,
-      reason,
-    });
-  }
-
-  setAllocation(deviceId, allocatedTokens) {
-    return this.request('POST', '/admin/set-allocation', {
-      device_id: deviceId,
-      allocated_tokens: allocatedTokens,
-    });
-  }
-
-  resetMonthly(defaultTokens = 50) {
-    return this.request('POST', '/admin/reset-monthly', { default_tokens: defaultTokens });
-  }
-
-  // ─── Usage ────────────────────
-  getUsageLogs(deviceId = null, limit = 100) {
-    let query = `/admin/usage-logs?limit=${limit}`;
-    if (deviceId) { query += `&device_id=${deviceId}`; }
-    return this.request('GET', query);
-  }
-
-  getTransfers() {
-    return this.request('GET', '/admin/transfers');
-  }
-
-  getModels() {
-    return this.request('GET', '/usage/models');
-  }
-
-  // ─── Settings ─────────────────
   updateSettings(settings) {
     return this.request('PUT', '/admin/settings', { settings });
   }
@@ -147,6 +150,10 @@ class Api {
   // ─── Health ───────────────────
   healthCheck() {
     return this.request('GET', '/health');
+  }
+
+  getModels() {
+    return this.request('GET', '/usage/models');
   }
 }
 

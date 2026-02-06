@@ -10,6 +10,10 @@ const {
   getCurrentMonth,
 } = require('../utils/helpers');
 
+const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || '';
+const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || '';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+
 /**
  * POST /api/auth/register
  * Register a new user account
@@ -480,6 +484,180 @@ router.post('/link-device', authenticateUser, async (req, res) => {
   } catch (error) {
     console.error('Link device error:', error);
     res.status(500).json({ error: 'Failed to link device' });
+  }
+});
+
+/**
+ * GET /api/auth/github/login
+ * Redirect user to GitHub OAuth authorization page
+ */
+router.get('/github/login', (req, res) => {
+  if (!GITHUB_CLIENT_ID) {
+    return res.status(500).json({ error: 'GitHub OAuth is not configured on the server.' });
+  }
+  const redirectUri = `${req.protocol}://${req.get('host')}/api/auth/github/callback`;
+  const scope = 'read:user user:email';
+  const url = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}`;
+  res.redirect(url);
+});
+
+/**
+ * GET /api/auth/github/callback
+ * GitHub redirects here after user authorizes
+ */
+router.get('/github/callback', async (req, res) => {
+  try {
+    const { code } = req.query;
+    if (!code) {
+      return res.redirect(`${FRONTEND_URL}/login?error=no_code`);
+    }
+
+    // Exchange code for access token
+    const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        client_id: GITHUB_CLIENT_ID,
+        client_secret: GITHUB_CLIENT_SECRET,
+        code,
+      }),
+    });
+    const tokenData = await tokenRes.json();
+
+    if (tokenData.error || !tokenData.access_token) {
+      console.error('GitHub token exchange error:', tokenData);
+      return res.redirect(`${FRONTEND_URL}/login?error=token_exchange_failed`);
+    }
+
+    // Get GitHub user info
+    const userRes = await fetch('https://api.github.com/user', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    const ghUser = await userRes.json();
+
+    // Get user emails
+    const emailRes = await fetch('https://api.github.com/user/emails', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    const emails = await emailRes.json();
+    const primaryEmail = Array.isArray(emails) ? emails.find(e => e.primary)?.email : null;
+
+    const github_id = String(ghUser.id);
+    const github_username = ghUser.login;
+    const email = primaryEmail || ghUser.email || `${github_username}@github.local`;
+    const avatar_url = ghUser.avatar_url;
+    const display_name = ghUser.name || github_username;
+
+    // Check if user exists by github_id
+    let { data: user } = await supabase
+      .from('users')
+      .select('*')
+      .eq('github_id', github_id)
+      .single();
+
+    if (user) {
+      // Update last login & info
+      await supabase
+        .from('users')
+        .update({
+          last_login_at: new Date().toISOString(),
+          github_username,
+          avatar_url: avatar_url || user.avatar_url,
+        })
+        .eq('id', user.id);
+
+      if (!user.is_active) {
+        return res.redirect(`${FRONTEND_URL}/login?error=account_deactivated`);
+      }
+
+      const token = generateUserToken(user.id, user.email, user.role);
+      return res.redirect(`${FRONTEND_URL}/auth/callback?token=${token}&user=${encodeURIComponent(JSON.stringify({
+        id: user.id,
+        email: user.email,
+        display_name: user.display_name,
+        role: user.role,
+        github_username: user.github_username,
+        avatar_url: user.avatar_url,
+      }))}`);
+    }
+
+    // New user — check settings
+    const { data: settings } = await supabase.from('admin_settings').select('*');
+    const settingsMap = {};
+    settings?.forEach(s => { settingsMap[s.setting_key] = s.setting_value; });
+
+    const allowPublic = settingsMap.allow_public_registration !== 'false';
+    if (!allowPublic) {
+      return res.redirect(`${FRONTEND_URL}/login?error=registration_disabled`);
+    }
+
+    const defaultBudget = parseInt(settingsMap.default_user_budget) || 50;
+    const defaultMaxDevices = parseInt(settingsMap.default_max_devices) || 3;
+
+    // Also check if email already exists (non-GitHub account)
+    const { data: existingByEmail } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', email.toLowerCase().trim())
+      .single();
+
+    if (existingByEmail) {
+      // Link GitHub to existing email account
+      await supabase
+        .from('users')
+        .update({
+          github_id,
+          github_username,
+          avatar_url,
+          last_login_at: new Date().toISOString(),
+        })
+        .eq('id', existingByEmail.id);
+
+      const token = generateUserToken(existingByEmail.id, email, 'user');
+      return res.redirect(`${FRONTEND_URL}/auth/callback?token=${token}&user=${encodeURIComponent(JSON.stringify({
+        id: existingByEmail.id,
+        email,
+        display_name,
+        role: 'user',
+        github_username,
+        avatar_url,
+      }))}`);
+    }
+
+    const { data: newUser, error: createErr } = await supabase
+      .from('users')
+      .insert({
+        email: email.toLowerCase().trim(),
+        display_name,
+        github_id,
+        github_username,
+        avatar_url,
+        monthly_token_budget: defaultBudget,
+        max_devices: defaultMaxDevices,
+      })
+      .select()
+      .single();
+
+    if (createErr) {
+      console.error('GitHub user creation error:', createErr);
+      return res.redirect(`${FRONTEND_URL}/login?error=creation_failed`);
+    }
+
+    const token = generateUserToken(newUser.id, newUser.email, newUser.role);
+    return res.redirect(`${FRONTEND_URL}/auth/callback?token=${token}&user=${encodeURIComponent(JSON.stringify({
+      id: newUser.id,
+      email: newUser.email,
+      display_name: newUser.display_name,
+      role: newUser.role,
+      github_username: newUser.github_username,
+      avatar_url: newUser.avatar_url,
+    }))}`);
+  } catch (error) {
+    console.error('GitHub callback error:', error);
+    return res.redirect(`${FRONTEND_URL}/login?error=server_error`);
   }
 });
 

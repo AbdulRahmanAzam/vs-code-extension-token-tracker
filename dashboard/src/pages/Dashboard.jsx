@@ -5,10 +5,8 @@ import { DeviceCard } from '../components/DeviceCard';
 import { ProgressBar } from '../components/ProgressBar';
 import { ThemeToggle } from '../App';
 import {
-  TransferModal,
   SetAllocationModal,
   RenameModal,
-  ResetModal,
   HistoryModal,
   ConfirmModal,
 } from '../components/Modals';
@@ -18,24 +16,31 @@ export default function Dashboard({ onLogout }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [activeTab, setActiveTab] = useState('overview'); // overview | users | invites
+  const [activeTab, setActiveTab] = useState('devices');
 
-  // Invites + Users state
-  const [invites, setInvites] = useState([]);
-  const [inviteLoading, setInviteLoading] = useState(false);
-  const [inviteBudget, setInviteBudget] = useState('50');
-  const [inviteMaxDevices, setInviteMaxDevices] = useState('3');
-  const [inviteExpiry, setInviteExpiry] = useState('30');
+  // Token key generation
+  const [keyLabel, setKeyLabel] = useState('');
+  const [keyTokens, setKeyTokens] = useState('50');
+  const [keyExpiry, setKeyExpiry] = useState('30');
+  const [keyLoading, setKeyLoading] = useState(false);
+  const [generatedKey, setGeneratedKey] = useState(null);
+
+  // Admin state
+  const [adminData, setAdminData] = useState(null);
+  const [adminLoading, setAdminLoading] = useState(false);
 
   // Modals
-  const [modal, setModal] = useState(null); // { type, device?, logs?, user? }
+  const [modal, setModal] = useState(null);
 
-  // ─── Load Dashboard ───────────────────────────
+  const currentUser = api.getUser();
+  const isAdmin = api.isAdmin();
+
+  // ─── Load User Dashboard ─────────────────
   const fetchDashboard = useCallback(async (silent = false) => {
-    if (!silent) { setLoading(true); }
-    else { setRefreshing(true); }
+    if (!silent) setLoading(true);
+    else setRefreshing(true);
     try {
-      const res = await api.getDashboard();
+      const res = await api.getUserDashboard();
       setData(res);
     } catch (err) {
       toast.error('Failed to load dashboard: ' + err.message);
@@ -45,12 +50,15 @@ export default function Dashboard({ onLogout }) {
     }
   }, [toast]);
 
-  const fetchInvites = useCallback(async () => {
+  const fetchAdminData = useCallback(async () => {
+    setAdminLoading(true);
     try {
-      const res = await api.getInvites();
-      setInvites(res.invites || []);
+      const res = await api.getAdminDashboard();
+      setAdminData(res);
     } catch (err) {
-      toast.error('Failed to load invite tokens');
+      toast.error('Admin dashboard error: ' + err.message);
+    } finally {
+      setAdminLoading(false);
     }
   }, [toast]);
 
@@ -61,12 +69,48 @@ export default function Dashboard({ onLogout }) {
   }, [fetchDashboard]);
 
   useEffect(() => {
-    if (activeTab === 'invites') {
-      fetchInvites();
+    if (activeTab === 'admin' && isAdmin) {
+      fetchAdminData();
     }
-  }, [activeTab, fetchInvites]);
+  }, [activeTab, isAdmin, fetchAdminData]);
 
-  // ─── Device Actions ───────────────────────────
+  // ─── Token Key Actions ────────────────
+  const handleGenerateKey = async () => {
+    setKeyLoading(true);
+    setGeneratedKey(null);
+    try {
+      const res = await api.generateTokenKey(
+        keyLabel.trim() || 'Device Key',
+        parseInt(keyTokens) || 50,
+        parseInt(keyExpiry) || 30
+      );
+      setGeneratedKey(res.key?.token_key || res.token_key);
+      toast.success('Token key generated!');
+      setKeyLabel('');
+      fetchDashboard(true);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setKeyLoading(false);
+    }
+  };
+
+  const handleDeleteKey = async (keyId) => {
+    try {
+      await api.deleteTokenKey(keyId);
+      toast.success('Token key deleted');
+      fetchDashboard(true);
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text);
+    toast.success('Copied to clipboard!');
+  };
+
+  // ─── Device Actions ───────────────────
   const handleBlock = async (deviceId, blocked) => {
     try {
       await api.blockDevice(deviceId, blocked);
@@ -77,20 +121,9 @@ export default function Dashboard({ onLogout }) {
     }
   };
 
-  const handleTransfer = async (toId, tokens, fromId, reason) => {
-    try {
-      await api.allocateTokens(toId, tokens, fromId, reason);
-      toast.success(`${tokens} tokens transferred successfully`);
-      setModal(null);
-      fetchDashboard(true);
-    } catch (err) {
-      toast.error(err.message);
-    }
-  };
-
   const handleSetAllocation = async (deviceId, tokens) => {
     try {
-      await api.setAllocation(deviceId, tokens);
+      await api.setDeviceAllocation(deviceId, tokens);
       toast.success('Allocation updated');
       setModal(null);
       fetchDashboard(true);
@@ -103,17 +136,6 @@ export default function Dashboard({ onLogout }) {
     try {
       await api.renameDevice(deviceId, newName);
       toast.success('Device renamed');
-      setModal(null);
-      fetchDashboard(true);
-    } catch (err) {
-      toast.error(err.message);
-    }
-  };
-
-  const handleReset = async (defaultTokens) => {
-    try {
-      await api.resetMonthly(defaultTokens);
-      toast.success('Monthly allocations reset');
       setModal(null);
       fetchDashboard(true);
     } catch (err) {
@@ -134,20 +156,20 @@ export default function Dashboard({ onLogout }) {
 
   const handleViewHistory = async (device) => {
     try {
-      const res = await api.getUsageLogs(device.id, 50);
+      const res = await api.getDeviceHistory(device.id);
       setModal({ type: 'history', device, logs: res.logs || [] });
     } catch (err) {
       toast.error('Failed to load history');
     }
   };
 
-  // ─── User Actions ─────────────────────────────
+  // ─── Admin Actions ────────────────────
   const handleUpdateUser = async (userId, updates) => {
     try {
       await api.updateUser(userId, updates);
       toast.success('User updated');
       setModal(null);
-      fetchDashboard(true);
+      fetchAdminData();
     } catch (err) {
       toast.error(err.message);
     }
@@ -158,46 +180,13 @@ export default function Dashboard({ onLogout }) {
       await api.deleteUser(user.id);
       toast.success(`User ${user.email} deleted`);
       setModal(null);
-      fetchDashboard(true);
+      fetchAdminData();
     } catch (err) {
       toast.error(err.message);
     }
   };
 
-  const handleToggleUserActive = async (user) => {
-    await handleUpdateUser(user.id, { is_active: !user.is_active });
-  };
-
-  // ─── Invite Actions ───────────────────────────
-  const handleCreateInvite = async () => {
-    setInviteLoading(true);
-    try {
-      await api.createInvite(parseInt(inviteBudget), parseInt(inviteMaxDevices), parseInt(inviteExpiry));
-      toast.success('Invite token created');
-      fetchInvites();
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setInviteLoading(false);
-    }
-  };
-
-  const handleDeleteInvite = async (inviteId) => {
-    try {
-      await api.deleteInvite(inviteId);
-      toast.success('Invite token deleted');
-      fetchInvites();
-    } catch (err) {
-      toast.error(err.message);
-    }
-  };
-
-  const copyInviteToken = (token) => {
-    navigator.clipboard.writeText(token);
-    toast.success('Invite token copied to clipboard');
-  };
-
-  // ─── Loading State ────────────────────────────
+  // ─── Loading ──────────────────────────
   if (loading || !data) {
     return (
       <div className="loading-page">
@@ -207,10 +196,16 @@ export default function Dashboard({ onLogout }) {
     );
   }
 
-  const { budget, devices, users } = data;
-  const budgetPct = budget.total > 0 ? Math.round((budget.used / budget.total) * 100) : 0;
-  const userList = users?.list || [];
-  const allDevices = devices?.list || [];
+  const { user, devices = [], token_keys = [], summary = {} } = data;
+  const budgetPct = summary.total_budget > 0 ? Math.round((summary.total_used / summary.total_budget) * 100) : 0;
+
+  const tabs = [
+    { key: 'devices', label: '⬡ My Devices', count: devices.length },
+    { key: 'keys', label: '🔑 Token Keys', count: token_keys?.length },
+  ];
+  if (isAdmin) {
+    tabs.push({ key: 'admin', label: '🛡 Admin Panel' });
+  }
 
   return (
     <>
@@ -220,9 +215,18 @@ export default function Dashboard({ onLogout }) {
           <div className="topnav-brand">
             <div className="logo-icon">⚡</div>
             <span className="brand-text">Token Tracker</span>
-            <span className="badge cyan" style={{ marginLeft: 4 }}>{data.month}</span>
+            <span className="badge cyan" style={{ marginLeft: 4 }}>{summary.month || new Date().toLocaleString('en', { month: 'long', year: 'numeric' })}</span>
           </div>
           <div className="topnav-actions">
+            <div className="user-info" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {user?.avatar_url && (
+                <img src={user.avatar_url} alt="" style={{ width: 28, height: 28, borderRadius: '50%', border: '2px solid var(--border)' }} />
+              )}
+              <span style={{ fontSize: '12px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
+                {user?.display_name || user?.email?.split('@')[0]}
+              </span>
+              {isAdmin && <span className="badge purple" style={{ fontSize: '9px' }}>ADMIN</span>}
+            </div>
             <ThemeToggle />
             <div className="server-status">
               <span className="pulse" />
@@ -243,29 +247,29 @@ export default function Dashboard({ onLogout }) {
         {/* ─── Budget Stats ─── */}
         <div className="stats-grid">
           <div className="stat-card accent">
-            <div className="stat-label">Total Budget</div>
-            <div className="stat-value" style={{ color: 'var(--accent)' }}>{budget.total}</div>
+            <div className="stat-label">Monthly Budget</div>
+            <div className="stat-value" style={{ color: 'var(--accent)' }}>{summary.total_budget || 0}</div>
             <div className="stat-sub">tokens / month</div>
           </div>
           <div className="stat-card green">
             <div className="stat-label">Remaining</div>
-            <div className="stat-value" style={{ color: 'var(--green)' }}>{budget.remaining}</div>
+            <div className="stat-value" style={{ color: 'var(--green)' }}>{summary.total_remaining || 0}</div>
             <div className="stat-sub">available to use</div>
           </div>
           <div className="stat-card yellow">
-            <div className="stat-label">Consumed</div>
-            <div className="stat-value" style={{ color: budget.used > budget.total * 0.8 ? 'var(--red)' : 'var(--yellow)' }}>
-              {budget.used}
+            <div className="stat-label">Used</div>
+            <div className="stat-value" style={{ color: budgetPct > 80 ? 'var(--red)' : 'var(--yellow)' }}>
+              {summary.total_used || 0}
             </div>
-            <div className="stat-sub">{budgetPct}% utilized</div>
+            <div className="stat-sub">{budgetPct}% consumed</div>
           </div>
           <div className="stat-card red">
-            <div className="stat-label">Users / Devices</div>
+            <div className="stat-label">Devices</div>
             <div className="stat-value">
-              {userList.length}
-              <span style={{ fontSize: '16px', color: 'var(--text-muted)', fontWeight: 500 }}> / {devices.count}</span>
+              {summary.device_count || devices.length}
+              <span style={{ fontSize: '16px', color: 'var(--text-muted)', fontWeight: 500 }}> / {summary.max_devices || '∞'}</span>
             </div>
-            <div className="stat-sub">{allDevices.filter(d => d.is_blocked).length} blocked</div>
+            <div className="stat-sub">linked devices</div>
           </div>
         </div>
 
@@ -276,19 +280,15 @@ export default function Dashboard({ onLogout }) {
               MONTHLY_USAGE_BAR
             </span>
             <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
-              {budget.allocated} allocated  ·  {budget.unallocated} pool
+              {summary.total_allocated || 0} allocated · {(summary.total_budget || 0) - (summary.total_allocated || 0)} unallocated
             </span>
           </div>
-          <ProgressBar used={budget.used} allocated={budget.total} />
+          <ProgressBar used={summary.total_used || 0} allocated={summary.total_budget || 0} />
         </div>
 
         {/* ─── Tab Navigation ─── */}
         <div className="tab-bar" style={{ display: 'flex', gap: '4px', marginBottom: '24px', borderBottom: '1px solid var(--border)', paddingBottom: '0' }}>
-          {[
-            { key: 'overview', label: '⬡ Devices', count: devices.count },
-            { key: 'users', label: '👥 Users', count: userList.length },
-            { key: 'invites', label: '🎟 Invite Tokens' },
-          ].map(tab => (
+          {tabs.map(tab => (
             <button
               key={tab.key}
               className={`btn btn-sm ${activeTab === tab.key ? 'btn-primary' : ''}`}
@@ -304,34 +304,35 @@ export default function Dashboard({ onLogout }) {
           ))}
         </div>
 
-        {/* ─── Tab: Devices (Overview) ─── */}
-        {activeTab === 'overview' && (
+        {/* ─── Tab: My Devices ─── */}
+        {activeTab === 'devices' && (
           <>
             <div className="section-header">
-              <h2>⬡ Connected Devices</h2>
+              <h2>⬡ My Devices</h2>
               <div className="section-header-actions">
-                <button className="btn btn-primary" onClick={() => setModal({ type: 'transfer', device: null })}>
-                  ⚡ Transfer Tokens
-                </button>
-                <button className="btn btn-warning" onClick={() => setModal({ type: 'reset' })}>
-                  ↺ Reset Monthly
+                <button className="btn btn-primary" onClick={() => setActiveTab('keys')}>
+                  🔑 Generate Token Key
                 </button>
               </div>
             </div>
 
-            {allDevices.length === 0 ? (
+            {devices.length === 0 ? (
               <div className="card empty-state">
                 <div className="icon">📡</div>
-                <p>No devices connected. Users need to install the VS Code extension and sign in to begin tracking.</p>
+                <h3 style={{ marginBottom: '8px', color: 'var(--text)' }}>No devices linked yet</h3>
+                <p>Generate a <strong>Token Key</strong> and paste it in the VS Code extension to link a device.</p>
+                <button className="btn btn-primary" style={{ marginTop: '16px' }} onClick={() => setActiveTab('keys')}>
+                  🔑 Generate Your First Key
+                </button>
               </div>
             ) : (
               <div className="devices-grid">
-                {allDevices.map(device => (
+                {devices.map(device => (
                   <DeviceCard
                     key={device.id}
                     device={device}
                     onBlock={handleBlock}
-                    onTransfer={(d) => setModal({ type: 'transfer', device: d })}
+                    onTransfer={(d) => setModal({ type: 'setAlloc', device: d })}
                     onSetAlloc={(d) => setModal({ type: 'setAlloc', device: d })}
                     onRename={(d) => setModal({ type: 'rename', device: d })}
                     onViewHistory={handleViewHistory}
@@ -340,108 +341,164 @@ export default function Dashboard({ onLogout }) {
                 ))}
               </div>
             )}
-          </>
-        )}
 
-        {/* ─── Tab: Users ─── */}
-        {activeTab === 'users' && (
-          <>
-            <div className="section-header">
-              <h2>👥 Registered Users</h2>
-            </div>
-
-            {userList.length === 0 ? (
-              <div className="card empty-state">
-                <div className="icon">👤</div>
-                <p>No users registered yet. Share an invite token or enable public registration.</p>
-              </div>
-            ) : (
-              <div className="devices-grid">
-                {userList.map(user => (
-                  <UserCard
-                    key={user.id}
-                    user={user}
-                    onToggleActive={handleToggleUserActive}
-                    onEdit={(u) => setModal({ type: 'editUser', user: u })}
-                    onDelete={(u) => setModal({ type: 'confirmDeleteUser', user: u })}
-                  />
+            {/* How it works */}
+            <div className="card" style={{ marginTop: '28px' }}>
+              <h3 style={{ fontSize: '14px', fontFamily: 'var(--font-mono)', color: 'var(--accent)', marginBottom: '16px' }}>
+                📋 HOW_IT_WORKS
+              </h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '16px' }}>
+                {[
+                  { num: '1', title: 'Generate a Token Key', desc: 'Go to Token Keys tab and generate a key with desired token allocation.' },
+                  { num: '2', title: 'Paste in VS Code Extension', desc: 'Install the Token Tracker extension, paste the key to link the device.' },
+                  { num: '3', title: 'Device Uses Your Tokens', desc: 'The device can use Copilot until the allocated tokens are exhausted.' },
+                  { num: '4', title: 'Manage From Here', desc: 'Block, rename, adjust limits, or remove devices anytime from this dashboard.' },
+                ].map(step => (
+                  <div key={step.num} style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                    <div style={{
+                      width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0,
+                      background: 'var(--accent-dim)', border: '1px solid var(--accent)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: '12px', fontWeight: 700, color: 'var(--accent)', fontFamily: 'var(--font-mono)'
+                    }}>{step.num}</div>
+                    <div>
+                      <strong style={{ fontSize: '13px' }}>{step.title}</strong>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>{step.desc}</p>
+                    </div>
+                  </div>
                 ))}
               </div>
-            )}
+            </div>
           </>
         )}
 
-        {/* ─── Tab: Invite Tokens ─── */}
-        {activeTab === 'invites' && (
+        {/* ─── Tab: Token Keys ─── */}
+        {activeTab === 'keys' && (
           <>
             <div className="section-header">
-              <h2>🎟 Invite Tokens</h2>
+              <h2>🔑 Token Keys</h2>
             </div>
 
-            {/* Create invite form */}
+            {/* Generate key form */}
             <div className="card" style={{ marginBottom: '20px' }}>
               <h3 style={{ marginBottom: '16px', fontSize: '14px', fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>
-                GENERATE_INVITE
+                GENERATE_TOKEN_KEY
               </h3>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                Generate a key, share it with a device. That device can then paste the key into the VS Code extension to start using your tokens.
+              </p>
               <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                <div className="form-group" style={{ flex: 1, minWidth: '100px' }}>
-                  <label className="form-label">Monthly Budget</label>
-                  <input type="number" className="form-input" value={inviteBudget} onChange={e => setInviteBudget(e.target.value)} min="1" max="500" />
+                <div className="form-group" style={{ flex: 2, minWidth: '150px' }}>
+                  <label className="form-label">Label (nickname)</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={keyLabel}
+                    onChange={e => setKeyLabel(e.target.value)}
+                    placeholder="e.g. Office Laptop, John's Mac"
+                  />
                 </div>
                 <div className="form-group" style={{ flex: 1, minWidth: '100px' }}>
-                  <label className="form-label">Max Devices</label>
-                  <input type="number" className="form-input" value={inviteMaxDevices} onChange={e => setInviteMaxDevices(e.target.value)} min="1" max="10" />
+                  <label className="form-label">Token Limit</label>
+                  <input
+                    type="number"
+                    className="form-input"
+                    value={keyTokens}
+                    onChange={e => setKeyTokens(e.target.value)}
+                    min="1"
+                    max={user?.monthly_token_budget || 500}
+                  />
                 </div>
                 <div className="form-group" style={{ flex: 1, minWidth: '100px' }}>
-                  <label className="form-label">Expires (days)</label>
-                  <input type="number" className="form-input" value={inviteExpiry} onChange={e => setInviteExpiry(e.target.value)} min="1" max="365" />
+                  <label className="form-label">Expiry (days)</label>
+                  <input
+                    type="number"
+                    className="form-input"
+                    value={keyExpiry}
+                    onChange={e => setKeyExpiry(e.target.value)}
+                    min="1"
+                    max="365"
+                  />
                 </div>
                 <button
                   className="btn btn-primary"
-                  onClick={handleCreateInvite}
-                  disabled={inviteLoading}
-                  style={{ height: '38px' }}
+                  onClick={handleGenerateKey}
+                  disabled={keyLoading}
+                  style={{ height: '42px', padding: '0 20px' }}
                 >
-                  {inviteLoading ? <span className="spinner" /> : '🎟 Generate'}
+                  {keyLoading ? <span className="spinner" /> : '🔑 Generate'}
                 </button>
               </div>
+
+              {/* Show generated key */}
+              {generatedKey && (
+                <div style={{
+                  marginTop: '16px', padding: '16px', borderRadius: 'var(--radius-sm)',
+                  background: 'var(--green-dim)', border: '1px solid rgba(34, 197, 94, 0.3)'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--green)' }}>✅ Key Generated — Share this with the device:</span>
+                    <button className="btn btn-sm btn-success" onClick={() => copyToClipboard(generatedKey)}>
+                      📋 Copy Key
+                    </button>
+                  </div>
+                  <code
+                    style={{
+                      display: 'block', padding: '12px', borderRadius: 'var(--radius-xs)',
+                      background: 'var(--bg-input)', border: '1px solid var(--border)',
+                      fontSize: '13px', fontFamily: 'var(--font-mono)', wordBreak: 'break-all',
+                      cursor: 'pointer', color: 'var(--accent)'
+                    }}
+                    onClick={() => copyToClipboard(generatedKey)}
+                  >
+                    {generatedKey}
+                  </code>
+                  <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px' }}>
+                    ⚠ This key will be shown only once. Copy it now and paste it in the VS Code extension's Token Tracker settings.
+                  </p>
+                </div>
+              )}
             </div>
 
-            {/* Invites list */}
-            {invites.length === 0 ? (
+            {/* Keys list */}
+            {(!token_keys || token_keys.length === 0) ? (
               <div className="card empty-state">
-                <div className="icon">🎟</div>
-                <p>No invite tokens yet. Generate one above to share with users.</p>
+                <div className="icon">🔑</div>
+                <p>No token keys yet. Generate one above to link a device.</p>
               </div>
             ) : (
               <div className="table-wrapper">
                 <table>
                   <thead>
                     <tr>
-                      <th>Token</th>
-                      <th>Budget</th>
-                      <th>Devices</th>
+                      <th>Key</th>
+                      <th>Label</th>
+                      <th>Tokens</th>
                       <th>Status</th>
                       <th>Expires</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {invites.map(inv => {
-                      const isUsed = !!inv.used_by;
-                      const isExpired = new Date(inv.expires_at) < new Date();
+                    {token_keys.map(tk => {
+                      const tkKey = tk.token_key || tk.key || '';
+                      const isExpired = new Date(tk.expires_at) < new Date();
                       return (
-                        <tr key={inv.id}>
+                        <tr key={tk.id}>
                           <td>
-                            <code style={{ fontSize: '12px', fontFamily: 'var(--font-mono)', cursor: 'pointer' }} onClick={() => copyInviteToken(inv.token)} title="Click to copy">
-                              {inv.token.substring(0, 16)}…
+                            <code
+                              style={{ fontSize: '12px', fontFamily: 'var(--font-mono)', cursor: 'pointer' }}
+                              onClick={() => copyToClipboard(tkKey)}
+                              title="Click to copy"
+                            >
+                              {tkKey.substring(0, 20)}…
                             </code>
                           </td>
-                          <td>{inv.monthly_budget}</td>
-                          <td>{inv.max_devices}</td>
+                          <td>{tk.label}</td>
+                          <td>{tk.allocated_tokens}</td>
                           <td>
-                            {isUsed ? (
-                              <span className="badge green">USED</span>
+                            {tk.is_used ? (
+                              <span className="badge green">REDEEMED</span>
                             ) : isExpired ? (
                               <span className="badge red">EXPIRED</span>
                             ) : (
@@ -449,16 +506,16 @@ export default function Dashboard({ onLogout }) {
                             )}
                           </td>
                           <td style={{ fontSize: '12px' }}>
-                            {new Date(inv.expires_at).toLocaleDateString()}
+                            {new Date(tk.expires_at).toLocaleDateString()}
                           </td>
                           <td>
                             <div style={{ display: 'flex', gap: '4px' }}>
-                              {!isUsed && (
-                                <button className="btn btn-sm" onClick={() => copyInviteToken(inv.token)} title="Copy token">
+                              {!tk.is_used && !isExpired && (
+                                <button className="btn btn-sm" onClick={() => copyToClipboard(tkKey)} title="Copy key">
                                   📋
                                 </button>
                               )}
-                              <button className="btn btn-sm btn-danger" onClick={() => handleDeleteInvite(inv.id)} title="Delete">
+                              <button className="btn btn-sm btn-danger" onClick={() => handleDeleteKey(tk.id)} title="Delete">
                                 🗑
                               </button>
                             </div>
@@ -470,6 +527,63 @@ export default function Dashboard({ onLogout }) {
                 </table>
               </div>
             )}
+          </>
+        )}
+
+        {/* ─── Tab: Admin Panel ─── */}
+        {activeTab === 'admin' && isAdmin && (
+          <>
+            <div className="section-header">
+              <h2>🛡 Admin Panel</h2>
+              <button className="btn btn-sm" onClick={fetchAdminData} disabled={adminLoading}>
+                {adminLoading ? <span className="spinner" /> : '↻ Refresh'}
+              </button>
+            </div>
+
+            {adminLoading && !adminData ? (
+              <div className="card empty-state">
+                <div className="spinner" style={{ width: 24, height: 24, margin: '0 auto 10px' }} />
+                <p>Loading admin data…</p>
+              </div>
+            ) : adminData ? (
+              <>
+                {/* Admin Stats */}
+                <div className="stats-grid">
+                  <div className="stat-card accent">
+                    <div className="stat-label">Platform Budget</div>
+                    <div className="stat-value" style={{ color: 'var(--accent)' }}>{adminData.budget?.total || 0}</div>
+                  </div>
+                  <div className="stat-card green">
+                    <div className="stat-label">Total Users</div>
+                    <div className="stat-value" style={{ color: 'var(--green)' }}>{adminData.users?.count || 0}</div>
+                  </div>
+                  <div className="stat-card yellow">
+                    <div className="stat-label">Total Devices</div>
+                    <div className="stat-value" style={{ color: 'var(--yellow)' }}>{adminData.devices?.count || 0}</div>
+                  </div>
+                  <div className="stat-card red">
+                    <div className="stat-label">Total Used</div>
+                    <div className="stat-value" style={{ color: 'var(--red)' }}>{adminData.budget?.used || 0}</div>
+                  </div>
+                </div>
+
+                {/* Users list */}
+                <h3 style={{ marginBottom: '16px', fontSize: '14px', fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>
+                  ALL_USERS
+                </h3>
+                <div className="devices-grid">
+                  {(adminData.users?.list || []).map(u => (
+                    <AdminUserCard
+                      key={u.id}
+                      user={u}
+                      onEdit={(usr) => setModal({ type: 'editUser', user: usr })}
+                      onToggleActive={(usr) => handleUpdateUser(usr.id, { is_active: !usr.is_active })}
+                      onDelete={(usr) => setModal({ type: 'confirmDeleteUser', user: usr })}
+                    />
+                  ))}
+                </div>
+              </>
+            ) : null}
           </>
         )}
 
@@ -497,21 +611,12 @@ export default function Dashboard({ onLogout }) {
 
         {/* ─── Footer ─── */}
         <div className="footer-info">
-          Token Tracker v2.0 · SaaS Copilot Usage Management<br />
-          <span className="server-url">api.abdulrahmanazam.me</span>
+          Token Tracker v2.0 · Global Copilot Usage Management<br />
+          <span className="server-url">Powered by Token Tracker</span>
         </div>
       </main>
 
       {/* ─── Modals ─── */}
-      {modal?.type === 'transfer' && (
-        <TransferModal
-          devices={allDevices}
-          selectedDevice={modal.device}
-          onClose={() => setModal(null)}
-          onTransfer={handleTransfer}
-        />
-      )}
-
       {modal?.type === 'setAlloc' && modal.device && (
         <SetAllocationModal
           device={modal.device}
@@ -525,14 +630,6 @@ export default function Dashboard({ onLogout }) {
           device={modal.device}
           onClose={() => setModal(null)}
           onRename={handleRename}
-        />
-      )}
-
-      {modal?.type === 'reset' && (
-        <ResetModal
-          deviceCount={devices.count}
-          onClose={() => setModal(null)}
-          onReset={handleReset}
         />
       )}
 
@@ -566,7 +663,7 @@ export default function Dashboard({ onLogout }) {
       {modal?.type === 'confirmDeleteUser' && modal.user && (
         <ConfirmModal
           title="🗑 Delete User"
-          message={`Are you sure you want to delete user "${modal.user.email}"? This will remove all their devices and usage data. This action cannot be undone.`}
+          message={`Are you sure you want to delete user "${modal.user.email}"? This action cannot be undone.`}
           confirmLabel="Delete User"
           danger
           onClose={() => setModal(null)}
@@ -577,63 +674,64 @@ export default function Dashboard({ onLogout }) {
   );
 }
 
-// ─── User Card Component ──────────────────────────────────
+// ─── Admin User Card ──────────────────────────
 
-function UserCard({ user, onToggleActive, onEdit, onDelete }) {
-  const deviceCount = user.devices?.length || 0;
-  const totalUsed = user.devices?.reduce((sum, d) => sum + (d.allocation?.used || 0), 0) || 0;
+function AdminUserCard({ user, onEdit, onToggleActive, onDelete }) {
+  const deviceCount = user.devices?.length || user.device_count || 0;
+  const totalUsed = user.total_used || user.devices?.reduce((sum, d) => sum + (d.allocation?.used || 0), 0) || 0;
 
   return (
     <div className={`device-card ${!user.is_active ? 'blocked' : ''}`}>
       <div className="device-header">
-        <div>
-          <div className="device-name">
-            <span className={`dot ${user.is_active ? 'online' : 'blocked'}`} />
-            {user.display_name || user.email.split('@')[0]}
-          </div>
-          <div className="device-meta">
-            {user.email} &nbsp;·&nbsp; {deviceCount} device{deviceCount !== 1 ? 's' : ''}
-            {user.github_username ? ` · GitHub: ${user.github_username}` : ''}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {user.avatar_url && (
+            <img src={user.avatar_url} alt="" style={{ width: 32, height: 32, borderRadius: '50%', border: '2px solid var(--border)' }} />
+          )}
+          <div>
+            <div className="device-name">
+              <span className={`dot ${user.is_active ? 'online' : 'blocked'}`} />
+              {user.display_name || user.email.split('@')[0]}
+            </div>
+            <div className="device-meta">
+              {user.email} · {deviceCount} device{deviceCount !== 1 ? 's' : ''}
+              {user.github_username ? ` · @${user.github_username}` : ''}
+            </div>
           </div>
         </div>
         <div className="device-actions">
           <span className={`badge ${user.role === 'admin' ? 'purple' : 'cyan'}`}>
-            {user.role.toUpperCase()}
+            {user.role?.toUpperCase()}
           </span>
           {!user.is_active && <span className="badge red">DISABLED</span>}
         </div>
       </div>
 
       <div className="token-count" style={{ marginTop: '8px' }}>
-        <span className="used">Budget: {user.monthly_token_budget} token/mo</span>
+        <span className="used">Budget: {user.monthly_token_budget} tok/mo</span>
         <span className={`remaining ${totalUsed > user.monthly_token_budget * 0.8 ? 'warning' : 'ok'}`}>
           Used: {totalUsed}
         </span>
       </div>
 
       <div className="device-meta" style={{ marginTop: '4px', fontSize: '11px' }}>
-        Max devices: {user.max_devices} &nbsp;·&nbsp; Joined: {new Date(user.created_at).toLocaleDateString()}
+        Max devices: {user.max_devices} · Joined: {new Date(user.created_at).toLocaleDateString()}
       </div>
 
       <div className="device-footer">
-        <button className="btn btn-sm btn-primary" onClick={() => onEdit(user)}>
-          ✎ Edit
-        </button>
+        <button className="btn btn-sm btn-primary" onClick={() => onEdit(user)}>✎ Edit</button>
         <button
           className={`btn btn-sm ${user.is_active ? 'btn-warning' : 'btn-success'}`}
           onClick={() => onToggleActive(user)}
         >
           {user.is_active ? '🔒 Disable' : '🔓 Enable'}
         </button>
-        <button className="btn btn-sm btn-danger" onClick={() => onDelete(user)}>
-          🗑 Delete
-        </button>
+        <button className="btn btn-sm btn-danger" onClick={() => onDelete(user)}>🗑</button>
       </div>
     </div>
   );
 }
 
-// ─── Edit User Modal ──────────────────────────────────────
+// ─── Edit User Modal ──────────────────────────
 
 function EditUserModal({ user, onClose, onSave }) {
   const [budget, setBudget] = useState(user.monthly_token_budget?.toString() || '50');
@@ -654,7 +752,6 @@ function EditUserModal({ user, onClose, onSave }) {
     }
   };
 
-  // Inline modal (uses same Modal component pattern)
   return (
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal">
@@ -674,7 +771,7 @@ function EditUserModal({ user, onClose, onSave }) {
           </div>
           <div className="form-group">
             <label className="form-label">Max Devices</label>
-            <input type="number" className="form-input" value={maxDevices} onChange={e => setMaxDevices(e.target.value)} min="1" max="10" />
+            <input type="number" className="form-input" value={maxDevices} onChange={e => setMaxDevices(e.target.value)} min="1" max="20" />
           </div>
           <div className="form-group">
             <label className="form-label">Role</label>

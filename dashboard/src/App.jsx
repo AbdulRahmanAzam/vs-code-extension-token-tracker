@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { api } from './api';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
+import AuthCallback from './pages/AuthCallback';
 import { ToastProvider } from './components/Toast';
 
 // Theme context
@@ -39,13 +40,13 @@ export default function App() {
 
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
 
-  const handleLogin = (token) => {
-    api.setToken(token);
+  const handleLogin = (token, user) => {
+    api.setAuth(token, user);
     setIsAuth(true);
   };
 
   const handleLogout = () => {
-    api.clearToken();
+    api.clearAuth();
     setIsAuth(false);
   };
 
@@ -59,6 +60,10 @@ export default function App() {
               element={
                 isAuth ? <Navigate to="/" replace /> : <Login onLogin={handleLogin} />
               }
+            />
+            <Route
+              path="/auth/callback"
+              element={<AuthCallback onLogin={handleLogin} />}
             />
             <Route
               path="/*"
