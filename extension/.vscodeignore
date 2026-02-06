@@ -1,0 +1,7 @@
+**/*.ts
+src/
+tsconfig.json
+.gitignore
+node_modules/
+icon.svg
+**/*.svg

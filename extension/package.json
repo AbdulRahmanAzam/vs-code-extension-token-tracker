@@ -1,0 +1,93 @@
+{
+  "name": "token-tracker-extension",
+  "displayName": "Token Tracker - Copilot Usage Limiter",
+  "description": "Track and limit GitHub Copilot token usage across devices with centralized monthly budgets, per-device allocations, real-time monitoring, and automatic blocking when limits are reached.",
+  "version": "1.0.2",
+  "publisher": "Abdul-Rahman-Azam",
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AbdulRahmanAzam/vs-code-extension-token-tracker"
+  },
+  "galleryBanner": {
+    "color": "#0a0a0a",
+    "theme": "dark"
+  },
+  "keywords": [
+    "copilot",
+    "token",
+    "usage",
+    "limiter",
+    "budget",
+    "tracker",
+    "ai"
+  ],
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "tokenTracker.showBalance",
+        "title": "Token Tracker: Show Balance"
+      },
+      {
+        "command": "tokenTracker.syncNow",
+        "title": "Token Tracker: Sync with Server"
+      },
+      {
+        "command": "tokenTracker.showHistory",
+        "title": "Token Tracker: Show Usage History"
+      },
+      {
+        "command": "tokenTracker.configure",
+        "title": "Token Tracker: Configure Server URL"
+      }
+    ],
+    "configuration": {
+      "title": "Token Tracker",
+      "properties": {
+        "tokenTracker.serverUrl": {
+          "type": "string",
+          "default": "http://192.168.100.6:3000",
+          "description": "URL of the central token tracking server"
+        },
+        "tokenTracker.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable token tracking"
+        },
+        "tokenTracker.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show token balance in status bar"
+        },
+        "tokenTracker.blockOnLimitReached": {
+          "type": "boolean",
+          "default": true,
+          "description": "Block Copilot when token limit is reached"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npx @vscode/vsce package --allow-missing-repository"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.3.3",
+    "@vscode/vsce": "^3.2.0"
+  }
+}
