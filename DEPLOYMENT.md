@@ -148,26 +148,53 @@ openssl rand -hex 32
 
 ### 2.5 Apply Database Schema v2
 
-**Option A: Using Supabase Dashboard (RECOMMENDED)**
+**Choose ONE option based on your situation:**
 
-1. Go to your Supabase project → SQL Editor
-2. On your local machine, open `backend/database/schema_v2.sql`
-3. Copy the entire contents
-4. Paste into Supabase SQL Editor
-5. Click **RUN**
-6. Verify success (no errors)
+#### Option A: Fresh Install (No existing data - CLEAN SLATE)
 
-**Option B: Using psql command line**
+Use this if you want a completely fresh database with no old data.
 
-First, get your Supabase connection string:
-- Supabase Dashboard → Settings → Database → Connection string → URI
+1. Go to Supabase Dashboard → SQL Editor
+2. Copy contents from `backend/database/schema_v2_fresh.sql`
+3. Paste and click **RUN**
+
+**⚠️ WARNING:** This deletes ALL existing data!
+
+#### Option B: Migration (Keep existing data - RECOMMENDED)
+
+Use this if you have existing devices/usage data you want to keep.
+
+1. Go to Supabase Dashboard → SQL Editor
+2. Copy contents from `backend/database/migrate_v1_to_v2.sql`
+3. Paste and click **RUN**
+
+This will:
+- Create the `users` table
+- Add `user_id` column to existing tables
+- Migrate old devices to a default user account
+- Preserve all existing usage data
+
+#### Option C: Using psql command line
 
 ```bash
 cd ~/token-tracker/backend
 
-# Replace YOUR_PASSWORD with your actual database password
-psql "postgresql://postgres.ezsxjsobmzydrughvijl:YOUR_PASSWORD@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres" -f database/schema_v2.sql
+# For fresh install (deletes all data):
+psql "postgresql://postgres.ezsxjsobmzydrughvijl:YOUR_PASSWORD@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres" -f database/schema_v2_fresh.sql
+
+# OR for migration (keeps data):
+psql "postgresql://postgres.ezsxjsobmzydrughvijl:YOUR_PASSWORD@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres" -f database/migrate_v1_to_v2.sql
 ```
+
+**Verify Success:**
+
+Run this query in Supabase SQL Editor:
+```sql
+SELECT COUNT(*) as user_count FROM users;
+SELECT COUNT(*) as device_count FROM devices;
+```
+
+Should return at least 1 user and your devices.
 
 ### 2.6 Test Backend Locally
 
