@@ -243,6 +243,20 @@ router.post('/redeem-key', async (req, res) => {
       .eq('hardware_fingerprint', hardware_fingerprint)
       .single();
 
+    // Also check if fingerprint exists under a **different** user (cross-user collision)
+    const { data: foreignDevice } = await supabase
+      .from('devices')
+      .select('id, user_id, device_name')
+      .eq('hardware_fingerprint', hardware_fingerprint)
+      .neq('user_id', key.user_id)
+      .single();
+
+    if (foreignDevice) {
+      // Remove the stale device record under the other user so this key owner can register it
+      await supabase.from('devices').delete().eq('id', foreignDevice.id);
+      console.log(`Migrated device fingerprint from user ${foreignDevice.user_id} → ${key.user_id}`);
+    }
+
     const currentMonth = getCurrentMonth();
 
     if (existingDevice) {
@@ -310,7 +324,10 @@ router.post('/redeem-key', async (req, res) => {
 
     if (devErr) {
       console.error('Device creation error:', devErr);
-      return res.status(500).json({ error: 'Failed to register device' });
+      const msg = devErr.code === '23505'
+        ? 'This device is already registered under another account. Contact your admin.'
+        : 'Failed to register device';
+      return res.status(500).json({ error: msg });
     }
 
     // Create allocation
