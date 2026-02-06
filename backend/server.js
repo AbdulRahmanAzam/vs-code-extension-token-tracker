@@ -4,6 +4,7 @@ const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 
+const authRoutes = require('./routes/auth');
 const deviceRoutes = require('./routes/devices');
 const adminRoutes = require('./routes/admin');
 const usageRoutes = require('./routes/usage');
@@ -49,6 +50,7 @@ app.use(limiter);
 
 // Routes
 app.use('/api/health', healthRoutes);
+app.use('/api/auth', authRoutes);
 app.use('/api/devices', deviceRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/usage', usageRoutes);
@@ -57,7 +59,7 @@ app.use('/api/usage', usageRoutes);
 app.get('/', (req, res) => {
   res.json({
     name: 'Centralized Token Tracker API',
-    version: '1.0.0',
+    version: '2.0.0',
     status: 'running',
     endpoints: {
       health: '/api/health',

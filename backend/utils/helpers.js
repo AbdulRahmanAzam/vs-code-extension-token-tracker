@@ -1,25 +1,37 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-change-this';
 
 /**
  * Generate JWT token for a device
  */
-function generateDeviceToken(deviceId, fingerprint) {
+function generateDeviceToken(deviceId, userId, fingerprint) {
   return jwt.sign(
-    { deviceId, fingerprint, type: 'device' },
+    { deviceId, userId, fingerprint, type: 'device' },
     JWT_SECRET,
     { expiresIn: '365d' }
   );
 }
 
 /**
+ * Generate JWT token for a user (extension login)
+ */
+function generateUserToken(userId, email, role) {
+  return jwt.sign(
+    { userId, email, role, type: 'user' },
+    JWT_SECRET,
+    { expiresIn: '90d' }
+  );
+}
+
+/**
  * Generate JWT token for admin
  */
-function generateAdminToken() {
+function generateAdminToken(userId) {
   return jwt.sign(
-    { type: 'admin', isAdmin: true },
+    { type: 'admin', isAdmin: true, userId },
     JWT_SECRET,
     { expiresIn: '24h' }
   );
@@ -48,6 +60,13 @@ async function hashPassword(password) {
  */
 async function comparePassword(password, hash) {
   return bcrypt.compare(password, hash);
+}
+
+/**
+ * Generate a random invite token string
+ */
+function generateInviteCode() {
+  return crypto.randomBytes(16).toString('hex');
 }
 
 /**
@@ -122,7 +141,9 @@ function getModelTokenCost(modelType) {
 
 module.exports = {
   generateDeviceToken,
+  generateUserToken,
   generateAdminToken,
+  generateInviteCode,
   verifyToken,
   hashPassword,
   comparePassword,

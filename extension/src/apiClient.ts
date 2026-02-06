@@ -2,6 +2,9 @@ import * as vscode from 'vscode';
 import * as http from 'http';
 import * as https from 'https';
 
+// ─── Global backend URL (hardcoded for SaaS) ────────────
+const GLOBAL_SERVER_URL = 'https://api.abdulrahmanazam.me';
+
 /**
  * Allocation data from the server.
  */
@@ -10,6 +13,20 @@ export interface Allocation {
   used: number;
   remaining: number;
   month: string;
+}
+
+export interface UserInfo {
+  id: string;
+  email: string;
+  display_name: string;
+  role: string;
+  monthly_token_budget: number;
+  max_devices: number;
+}
+
+export interface AuthResult {
+  token: string;
+  user: UserInfo;
 }
 
 export interface DeviceInfo {
@@ -36,36 +53,54 @@ export interface UsageResult {
 }
 
 /**
- * Simple HTTP/HTTPS client for communicating with the token tracker API.
+ * HTTP/HTTPS client for communicating with the global token tracker API.
  * Uses built-in Node modules — zero external dependencies.
  */
 export class ApiClient {
   private serverUrl: string;
+  private userToken: string | null = null;
   private deviceToken: string | null = null;
   private deviceId: string | null = null;
 
   constructor() {
-    this.serverUrl = vscode.workspace.getConfiguration('tokenTracker').get<string>('serverUrl') || 'http://localhost:3000';
+    // Use configurable URL with global default
+    this.serverUrl = vscode.workspace.getConfiguration('tokenTracker')
+      .get<string>('serverUrl') || GLOBAL_SERVER_URL;
   }
 
   /** Update server URL from settings */
   refreshConfig(): void {
-    this.serverUrl = vscode.workspace.getConfiguration('tokenTracker').get<string>('serverUrl') || 'http://localhost:3000';
+    this.serverUrl = vscode.workspace.getConfiguration('tokenTracker')
+      .get<string>('serverUrl') || GLOBAL_SERVER_URL;
   }
 
-  setCredentials(deviceId: string, deviceToken: string): void {
+  setUserToken(token: string): void {
+    this.userToken = token;
+  }
+
+  setDeviceCredentials(deviceId: string, deviceToken: string): void {
     this.deviceId = deviceId;
     this.deviceToken = deviceToken;
+  }
+
+  clearCredentials(): void {
+    this.userToken = null;
+    this.deviceToken = null;
+    this.deviceId = null;
   }
 
   getDeviceId(): string | null {
     return this.deviceId;
   }
 
+  isLoggedIn(): boolean {
+    return !!this.userToken;
+  }
+
   /**
-   * Generic HTTP request helper using built-in Node modules.
+   * Generic HTTP request helper.
    */
-  private request<T>(method: string, path: string, body?: any): Promise<T> {
+  private request<T>(method: string, path: string, body?: any, authType: 'user' | 'device' | 'none' = 'device'): Promise<T> {
     return new Promise((resolve, reject) => {
       const url = new URL(path, this.serverUrl);
       const isHttps = url.protocol === 'https:';
@@ -74,7 +109,11 @@ export class ApiClient {
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
       };
-      if (this.deviceToken) {
+
+      // Choose which token to send
+      if (authType === 'user' && this.userToken) {
+        headers['Authorization'] = `Bearer ${this.userToken}`;
+      } else if (authType === 'device' && this.deviceToken) {
         headers['Authorization'] = `Bearer ${this.deviceToken}`;
       }
 
@@ -89,7 +128,7 @@ export class ApiClient {
         path: url.pathname + url.search,
         method,
         headers,
-        timeout: 10000,
+        timeout: 15000,
       };
 
       const req = lib.request(options, (res) => {
@@ -122,19 +161,41 @@ export class ApiClient {
     });
   }
 
-  /** Health check */
-  async healthCheck(): Promise<boolean> {
-    try {
-      const res = await this.request<{ status: string }>('GET', '/api/health');
-      return res.status === 'healthy';
-    } catch {
-      return false;
-    }
+  // ─── Auth endpoints ──────────────────────────────────────
+
+  /** Register a new account */
+  async register(email: string, password: string, displayName: string, inviteToken?: string): Promise<AuthResult> {
+    return this.request('POST', '/api/auth/register', {
+      email, password, display_name: displayName, invite_token: inviteToken,
+    }, 'none');
   }
 
-  /** Register device or re-register (returns existing if fingerprint already known) */
-  async registerDevice(deviceName: string, fingerprint: string): Promise<DeviceInfo> {
-    const res = await this.request<DeviceInfo>('POST', '/api/devices/register', {
+  /** Login with email + password */
+  async login(email: string, password: string): Promise<AuthResult> {
+    return this.request('POST', '/api/auth/login', { email, password }, 'none');
+  }
+
+  /** Login/register with GitHub session info */
+  async githubAuth(githubSession: { id: string; username: string; email?: string; avatar?: string }): Promise<AuthResult> {
+    return this.request('POST', '/api/auth/github', {
+      github_id: githubSession.id,
+      github_username: githubSession.username,
+      email: githubSession.email,
+      avatar_url: githubSession.avatar,
+      display_name: githubSession.username,
+    }, 'none');
+  }
+
+  /** Get current user profile */
+  async getProfile(): Promise<any> {
+    return this.request('GET', '/api/auth/me', undefined, 'user');
+  }
+
+  // ─── Device endpoints ────────────────────────────────────
+
+  /** Link a device to the logged-in user */
+  async linkDevice(deviceName: string, fingerprint: string): Promise<DeviceInfo> {
+    const res = await this.request<DeviceInfo>('POST', '/api/auth/link-device', {
       device_name: deviceName,
       hardware_fingerprint: fingerprint,
       metadata: {
@@ -142,10 +203,22 @@ export class ApiClient {
         arch: process.arch,
         vscode_version: vscode.version,
       },
-    });
+    }, 'user');
     this.deviceId = res.device_id;
     this.deviceToken = res.device_token;
     return res;
+  }
+
+  // ─── Usage endpoints (device auth) ───────────────────────
+
+  /** Health check */
+  async healthCheck(): Promise<boolean> {
+    try {
+      const res = await this.request<{ status: string }>('GET', '/api/health', undefined, 'none');
+      return res.status === 'healthy';
+    } catch {
+      return false;
+    }
   }
 
   /** Get current balance */
@@ -172,7 +245,7 @@ export class ApiClient {
 
   /** Get usage history */
   async getHistory(limit: number = 20): Promise<any> {
-    if (!this.deviceId) throw new Error('Not registered');
+    if (!this.deviceId) { throw new Error('Not registered'); }
     return this.request('GET', `/api/devices/${this.deviceId}/history?limit=${limit}`);
   }
 }

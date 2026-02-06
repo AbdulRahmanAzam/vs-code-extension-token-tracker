@@ -56,6 +56,36 @@ class Api {
     return this.request('GET', '/admin/dashboard');
   }
 
+  // ─── Users ────────────────────
+  getUsers() {
+    return this.request('GET', '/admin/users');
+  }
+
+  updateUser(userId, updates) {
+    return this.request('PUT', `/admin/users/${userId}`, updates);
+  }
+
+  deleteUser(userId) {
+    return this.request('DELETE', `/admin/users/${userId}`);
+  }
+
+  // ─── Invite Tokens ────────────
+  getInvites() {
+    return this.request('GET', '/admin/invites');
+  }
+
+  createInvite(monthlyBudget = 50, maxDevices = 3, expiresInDays = 30) {
+    return this.request('POST', '/admin/invites', {
+      monthly_budget: monthlyBudget,
+      max_devices: maxDevices,
+      expires_in_days: expiresInDays,
+    });
+  }
+
+  deleteInvite(inviteId) {
+    return this.request('DELETE', `/admin/invites/${inviteId}`);
+  }
+
   // ─── Devices ──────────────────
   getDevices() {
     return this.request('GET', '/admin/devices');
@@ -97,7 +127,7 @@ class Api {
   // ─── Usage ────────────────────
   getUsageLogs(deviceId = null, limit = 100) {
     let query = `/admin/usage-logs?limit=${limit}`;
-    if (deviceId) query += `&device_id=${deviceId}`;
+    if (deviceId) { query += `&device_id=${deviceId}`; }
     return this.request('GET', query);
   }
 

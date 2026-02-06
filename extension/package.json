@@ -1,8 +1,8 @@
 {
   "name": "token-tracker-extension",
   "displayName": "Token Tracker - Copilot Usage Limiter",
-  "description": "Track and limit GitHub Copilot token usage across devices with centralized monthly budgets, per-device allocations, real-time monitoring, and automatic blocking when limits are reached.",
-  "version": "1.0.4",
+  "description": "Track and limit GitHub Copilot token usage with centralized monthly budgets, per-user allocations, real-time monitoring, and automatic blocking when limits are reached. Sign in once — zero setup required.",
+  "version": "2.0.0",
   "publisher": "Abdul-Rahman-Azam",
   "license": "MIT",
   "icon": "icon.png",
@@ -21,7 +21,8 @@
     "limiter",
     "budget",
     "tracker",
-    "ai"
+    "ai",
+    "saas"
   ],
   "categories": [
     "Other",
@@ -47,6 +48,14 @@
         "title": "Token Tracker: Show Usage History"
       },
       {
+        "command": "tokenTracker.login",
+        "title": "Token Tracker: Sign In / Register"
+      },
+      {
+        "command": "tokenTracker.logout",
+        "title": "Token Tracker: Sign Out"
+      },
+      {
         "command": "tokenTracker.configure",
         "title": "Token Tracker: Configure Server URL"
       }
@@ -56,8 +65,8 @@
       "properties": {
         "tokenTracker.serverUrl": {
           "type": "string",
-          "default": "http://localhost:3000",
-          "description": "URL of the central token tracking server"
+          "default": "https://api.abdulrahmanazam.me",
+          "description": "URL of the central token tracking server. Only change if self-hosting."
         },
         "tokenTracker.enabled": {
           "type": "boolean",

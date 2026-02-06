@@ -26,25 +26,33 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push({ dispose: () => statusBar.dispose() });
   context.subscriptions.push({ dispose: () => tracker.stopPeriodicSync() });
 
-  // ─── Register or restore device ────────────────────────
+  // ─── Restore session from cache ────────────────────────
   const fingerprint = generateFingerprint();
-  const deviceName = getDeviceName();
-
   const cached = cache.load();
-  if (cached?.deviceId && cached?.deviceToken && cached.fingerprint === fingerprint) {
-    // Restore saved credentials
-    api.setCredentials(cached.deviceId, cached.deviceToken);
-    statusBar.update(cached.used, cached.allocated, cached.isBlocked);
+
+  if (cached?.userToken) {
+    // Restore user auth
+    api.setUserToken(cached.userToken);
+
+    if (cached.deviceId && cached.deviceToken && cached.fingerprint === fingerprint) {
+      // Restore device credentials
+      api.setDeviceCredentials(cached.deviceId, cached.deviceToken);
+      statusBar.update(cached.used, cached.allocated, cached.isBlocked);
+    } else {
+      // User logged in but device not yet linked on this machine
+      await autoLinkDevice(fingerprint);
+    }
+  } else {
+    // Not logged in — prompt to log in
+    statusBar.setError('Not logged in — click to sign in');
+    promptLogin();
   }
 
-  // Auto-register with server (or re-register to get latest balance)
-  registerDevice(fingerprint, deviceName);
-
-  // ─── Register tracking listeners (model wrapping, inline detection, commands) ──
+  // ─── Register tracking listeners ───────────────────────
   const listenerDisposables = tracker.registerListeners();
   listenerDisposables.forEach(d => context.subscriptions.push(d));
 
-  // ─── Register @tokenTracker chat participant for balance queries ──
+  // ─── Register @tokenTracker chat participant ──
   registerChatParticipant(context);
 
   // ─── Register commands ─────────────────────────────────
@@ -52,6 +60,8 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('tokenTracker.showBalance', showBalance),
     vscode.commands.registerCommand('tokenTracker.syncNow', syncNow),
     vscode.commands.registerCommand('tokenTracker.showHistory', showHistory),
+    vscode.commands.registerCommand('tokenTracker.login', () => showAuthWebview(context)),
+    vscode.commands.registerCommand('tokenTracker.logout', logout),
     vscode.commands.registerCommand('tokenTracker.configure', configureServer),
   );
 
@@ -69,8 +79,10 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // ─── Start periodic sync ──────────────────────────────
-  tracker.startPeriodicSync();
+  // ─── Start periodic sync (only if logged in) ──────────
+  if (cache.isLoggedIn() && cache.hasDeviceCredentials()) {
+    tracker.startPeriodicSync();
+  }
 
   console.log('Token Tracker activated');
 }
@@ -79,32 +91,386 @@ export function deactivate() {
   tracker?.stopPeriodicSync();
 }
 
-// ─── Device registration ───────────────────────────────────
+// ─── Auth flow ─────────────────────────────────────────────
 
-async function registerDevice(fingerprint: string, deviceName: string) {
-  try {
-    const info = await api.registerDevice(deviceName, fingerprint);
-    cache.save({
-      deviceId: info.device_id,
-      deviceToken: info.device_token,
-      fingerprint,
-      allocated: info.allocation.allocated,
-      used: info.allocation.used,
-      remaining: info.allocation.remaining,
-      month: info.allocation.month,
-      isBlocked: info.is_blocked,
-      lastSynced: Date.now(),
-    });
-    statusBar.update(info.allocation.used, info.allocation.allocated, info.is_blocked);
-  } catch (err: any) {
-    console.warn('Token Tracker: registration failed, using cache.', err?.message);
-    const cached = cache.load();
-    if (cached) {
-      statusBar.setOffline(cached.remaining, cached.allocated);
-    } else {
-      statusBar.setError('Not registered — check server URL');
-    }
+async function promptLogin() {
+  const action = await vscode.window.showInformationMessage(
+    '🎫 Token Tracker: Sign in to start tracking your Copilot usage.',
+    'Sign In',
+    'Register'
+  );
+  if (action === 'Sign In' || action === 'Register') {
+    vscode.commands.executeCommand('tokenTracker.login');
   }
+}
+
+async function autoLinkDevice(fingerprint: string) {
+  try {
+    const deviceName = getDeviceName();
+    const info = await api.linkDevice(deviceName, fingerprint);
+    cache.saveDeviceLink(info.device_id, info.device_token, fingerprint);
+    statusBar.update(info.allocation.used, info.allocation.allocated, info.is_blocked);
+    tracker.startPeriodicSync();
+  } catch (err: any) {
+    console.warn('Token Tracker: device linking failed.', err?.message);
+    statusBar.setError('Device link failed — try Sign In again');
+  }
+}
+
+async function handleEmailAuth(data: { action: 'login' | 'register'; email: string; password: string; displayName?: string; inviteToken?: string }) {
+  try {
+    let result;
+    if (data.action === 'register') {
+      result = await api.register(data.email, data.password, data.displayName || data.email.split('@')[0], data.inviteToken);
+    } else {
+      result = await api.login(data.email, data.password);
+    }
+
+    // Save user auth
+    api.setUserToken(result.token);
+    cache.saveUserAuth(result.token, {
+      email: result.user.email,
+      displayName: result.user.display_name,
+      role: result.user.role,
+    });
+
+    // Auto-link this device
+    const fingerprint = generateFingerprint();
+    await autoLinkDevice(fingerprint);
+
+    vscode.window.showInformationMessage(`🎫 Welcome, ${result.user.display_name}! Token tracking is active.`);
+  } catch (err: any) {
+    const msg = err?.error || err?.message || 'Authentication failed';
+    vscode.window.showErrorMessage(`Token Tracker: ${msg}`);
+    throw err; // re-throw so webview can show error
+  }
+}
+
+async function handleGitHubAuth() {
+  try {
+    // Use VS Code's built-in GitHub auth provider
+    const session = await vscode.authentication.getSession('github', ['user:email'], { createIfNone: true });
+    if (!session) {
+      vscode.window.showErrorMessage('Token Tracker: GitHub sign-in was cancelled.');
+      return;
+    }
+
+    // Exchange GitHub session for our token
+    const result = await api.githubAuth({
+      id: session.account.id,
+      username: session.account.label,
+      email: undefined, // GitHub doesn't expose email in session
+      avatar: undefined,
+    });
+
+    api.setUserToken(result.token);
+    cache.saveUserAuth(result.token, {
+      email: result.user.email,
+      displayName: result.user.display_name,
+      role: result.user.role,
+    });
+
+    // Auto-link device
+    const fingerprint = generateFingerprint();
+    await autoLinkDevice(fingerprint);
+
+    vscode.window.showInformationMessage(`🎫 Welcome, ${result.user.display_name}! Signed in via GitHub.`);
+  } catch (err: any) {
+    const msg = err?.error || err?.message || 'GitHub authentication failed';
+    vscode.window.showErrorMessage(`Token Tracker: ${msg}`);
+  }
+}
+
+async function logout() {
+  const confirm = await vscode.window.showWarningMessage(
+    'Token Tracker: Are you sure you want to sign out?',
+    { modal: true },
+    'Sign Out'
+  );
+  if (confirm !== 'Sign Out') { return; }
+
+  tracker.stopPeriodicSync();
+  api.clearCredentials();
+  cache.clear();
+  statusBar.setError('Signed out — click to sign in');
+
+  vscode.window.showInformationMessage('Token Tracker: Signed out successfully.');
+}
+
+// ─── Auth webview ──────────────────────────────────────────
+
+function showAuthWebview(context: vscode.ExtensionContext) {
+  const panel = vscode.window.createWebviewPanel(
+    'tokenTrackerAuth',
+    'Token Tracker — Sign In',
+    vscode.ViewColumn.One,
+    { enableScripts: true }
+  );
+
+  panel.webview.html = getAuthWebviewHtml();
+
+  panel.webview.onDidReceiveMessage(async (msg) => {
+    if (msg.type === 'email-auth') {
+      try {
+        await handleEmailAuth(msg.data);
+        panel.dispose();
+      } catch {
+        panel.webview.postMessage({ type: 'error', message: 'Authentication failed. Check your credentials.' });
+      }
+    } else if (msg.type === 'github-auth') {
+      await handleGitHubAuth();
+      panel.dispose();
+    }
+  }, undefined, context.subscriptions);
+}
+
+function getAuthWebviewHtml(): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      padding: 40px;
+      color: var(--vscode-foreground);
+      background: var(--vscode-editor-background);
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+    }
+    .container {
+      max-width: 420px;
+      width: 100%;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 8px;
+      text-align: center;
+    }
+    .subtitle {
+      text-align: center;
+      opacity: 0.7;
+      margin-bottom: 32px;
+      font-size: 14px;
+    }
+    .card {
+      background: var(--vscode-editorWidget-background);
+      border: 1px solid var(--vscode-widget-border);
+      border-radius: 12px;
+      padding: 28px;
+      margin-bottom: 16px;
+    }
+    .tabs {
+      display: flex;
+      margin-bottom: 20px;
+      border-bottom: 1px solid var(--vscode-widget-border);
+    }
+    .tab {
+      flex: 1;
+      text-align: center;
+      padding: 10px;
+      cursor: pointer;
+      opacity: 0.6;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+      background: none;
+      border-top: none;
+      border-left: none;
+      border-right: none;
+      color: var(--vscode-foreground);
+      font-size: 14px;
+    }
+    .tab.active {
+      opacity: 1;
+      border-bottom-color: var(--vscode-focusBorder);
+      font-weight: 600;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 4px;
+      opacity: 0.8;
+    }
+    input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--vscode-input-border);
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border-radius: 6px;
+      font-size: 14px;
+      margin-bottom: 14px;
+      outline: none;
+    }
+    input:focus {
+      border-color: var(--vscode-focusBorder);
+    }
+    .btn {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s;
+      margin-bottom: 10px;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+    .btn-github {
+      background: #24292e;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .divider {
+      display: flex;
+      align-items: center;
+      margin: 18px 0;
+      gap: 12px;
+    }
+    .divider::before, .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--vscode-widget-border);
+    }
+    .divider span {
+      font-size: 12px;
+      opacity: 0.5;
+      text-transform: uppercase;
+    }
+    .error {
+      background: var(--vscode-inputValidation-errorBackground);
+      border: 1px solid var(--vscode-inputValidation-errorBorder);
+      color: var(--vscode-errorForeground);
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-bottom: 14px;
+      display: none;
+    }
+    .invite-field { display: none; }
+    .invite-toggle {
+      font-size: 12px;
+      color: var(--vscode-textLink-foreground);
+      cursor: pointer;
+      text-align: center;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎫 Token Tracker</h1>
+    <p class="subtitle">Sign in to track your Copilot usage</p>
+
+    <div class="card">
+      <div class="tabs">
+        <button class="tab active" onclick="switchTab('login')">Sign In</button>
+        <button class="tab" onclick="switchTab('register')">Register</button>
+      </div>
+
+      <div id="error" class="error"></div>
+
+      <form id="authForm" onsubmit="handleSubmit(event)">
+        <div id="nameField" style="display:none;">
+          <label for="displayName">Display Name</label>
+          <input type="text" id="displayName" placeholder="Your name" />
+        </div>
+
+        <label for="email">Email</label>
+        <input type="email" id="email" placeholder="you@example.com" required />
+
+        <label for="password">Password</label>
+        <input type="password" id="password" placeholder="••••••••" required minlength="6" />
+
+        <div id="inviteField" class="invite-field">
+          <label for="inviteToken">Invite Token (optional)</label>
+          <input type="text" id="inviteToken" placeholder="Paste invite token" />
+        </div>
+
+        <button type="submit" class="btn btn-primary" id="submitBtn">Sign In</button>
+      </form>
+
+      <p id="inviteToggle" class="invite-toggle" style="display:none;" onclick="toggleInvite()">Have an invite token?</p>
+
+      <div class="divider"><span>or</span></div>
+
+      <button class="btn btn-github" onclick="githubAuth()">
+        <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        Sign in with GitHub
+      </button>
+    </div>
+  </div>
+
+  <script>
+    const vscode = acquireVsCodeApi();
+    let currentTab = 'login';
+
+    function switchTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.tab').forEach((t, i) => {
+        t.classList.toggle('active', (tab === 'login' && i === 0) || (tab === 'register' && i === 1));
+      });
+      document.getElementById('nameField').style.display = tab === 'register' ? 'block' : 'none';
+      document.getElementById('inviteToggle').style.display = tab === 'register' ? 'block' : 'none';
+      document.getElementById('submitBtn').textContent = tab === 'login' ? 'Sign In' : 'Create Account';
+      document.getElementById('error').style.display = 'none';
+    }
+
+    function toggleInvite() {
+      const el = document.getElementById('inviteField');
+      el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    }
+
+    function handleSubmit(e) {
+      e.preventDefault();
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      const displayName = document.getElementById('displayName').value;
+      const inviteToken = document.getElementById('inviteToken').value;
+
+      document.getElementById('submitBtn').disabled = true;
+      document.getElementById('submitBtn').textContent = 'Please wait...';
+
+      vscode.postMessage({
+        type: 'email-auth',
+        data: {
+          action: currentTab,
+          email,
+          password,
+          displayName: displayName || undefined,
+          inviteToken: inviteToken || undefined,
+        }
+      });
+    }
+
+    function githubAuth() {
+      vscode.postMessage({ type: 'github-auth' });
+    }
+
+    window.addEventListener('message', (event) => {
+      const msg = event.data;
+      if (msg.type === 'error') {
+        const el = document.getElementById('error');
+        el.textContent = msg.message;
+        el.style.display = 'block';
+        document.getElementById('submitBtn').disabled = false;
+        document.getElementById('submitBtn').textContent = currentTab === 'login' ? 'Sign In' : 'Create Account';
+      }
+    });
+  </script>
+</body>
+</html>`;
 }
 
 // ─── Chat Participant (for @tokenTracker balance queries) ──
@@ -118,15 +484,17 @@ function registerChatParticipant(context: vscode.ExtensionContext) {
     const participant = vscode.chat.createChatParticipant(
       'tokenTracker.watcher',
       async (request, _chatContext, stream, token) => {
-        if (token.isCancellationRequested) return;
+        if (token.isCancellationRequested) { return; }
 
         const cached = cache.load();
         const remaining = cached?.remaining ?? '?';
         const allocated = cached?.allocated ?? '?';
         const used = cached?.used ?? '?';
+        const user = cached?.user;
 
         stream.markdown(
           `⚡ **Token Tracker**\n\n` +
+          (user ? `👤 **${user.displayName}** (${user.email})\n\n` : '') +
           `| Stat | Value |\n|---|---|\n` +
           `| Allocated | ${allocated} |\n` +
           `| Used | ${used} |\n` +
@@ -146,16 +514,21 @@ function registerChatParticipant(context: vscode.ExtensionContext) {
 // ─── Command handlers ──────────────────────────────────────
 
 async function showBalance() {
+  if (!cache.isLoggedIn()) {
+    vscode.commands.executeCommand('tokenTracker.login');
+    return;
+  }
+
   await tracker.syncBalance();
   const cached = cache.load();
 
   if (!cached) {
-    vscode.window.showErrorMessage('Token Tracker: Not registered with server.');
+    vscode.window.showErrorMessage('Token Tracker: Not logged in.');
     return;
   }
 
   const models = getKnownModels();
-  const modelList = models.map(m => `  ${m.name}: ${m.cost === 0 ? 'FREE' : m.cost + ' token(s)'}`).join('\n');
+  const user = cached.user;
 
   const panel = vscode.window.createWebviewPanel(
     'tokenBalance',
@@ -188,10 +561,22 @@ async function showBalance() {
         .status.online { background: #2ecc71; color: white; }
         .status.offline { background: #e74c3c; color: white; }
         .status.blocked { background: #8e44ad; color: white; }
+        .user-banner { background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-widget-border); border-radius: 8px; padding: 14px 20px; margin-bottom: 16px; display: flex; align-items: center; gap: 12px; }
+        .user-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--vscode-button-background); display: flex; align-items: center; justify-content: center; font-size: 18px; }
       </style>
     </head>
     <body>
       <h1>🎫 Token Tracker</h1>
+
+      ${user ? `
+      <div class="user-banner">
+        <div class="user-avatar">👤</div>
+        <div>
+          <strong>${user.displayName}</strong><br/>
+          <span style="opacity:0.6; font-size:13px;">${user.email} · ${user.role}</span>
+        </div>
+      </div>
+      ` : ''}
       
       <div class="card">
         <h3>Balance — ${cached.month}</h3>
@@ -226,12 +611,21 @@ async function showBalance() {
 }
 
 async function syncNow() {
+  if (!cache.isLoggedIn()) {
+    vscode.commands.executeCommand('tokenTracker.login');
+    return;
+  }
   statusBar.setLoading();
   await tracker.syncBalance();
   vscode.window.showInformationMessage('Token Tracker: Synced with server!');
 }
 
 async function showHistory() {
+  if (!cache.isLoggedIn()) {
+    vscode.commands.executeCommand('tokenTracker.login');
+    return;
+  }
+
   try {
     const history = await api.getHistory(30);
     const panel = vscode.window.createWebviewPanel(
@@ -271,11 +665,11 @@ async function showHistory() {
 }
 
 async function configureServer() {
-  const currentUrl = vscode.workspace.getConfiguration('tokenTracker').get<string>('serverUrl') || 'http://localhost:3000';
+  const currentUrl = vscode.workspace.getConfiguration('tokenTracker').get<string>('serverUrl') || 'https://api.abdulrahmanazam.me';
   const url = await vscode.window.showInputBox({
-    prompt: 'Enter token tracker server URL',
+    prompt: 'Enter token tracker server URL (only change if self-hosting)',
     value: currentUrl,
-    placeHolder: 'https://your-server.com',
+    placeHolder: 'https://api.abdulrahmanazam.me',
   });
   if (url) {
     await vscode.workspace.getConfiguration('tokenTracker').update('serverUrl', url, vscode.ConfigurationTarget.Global);

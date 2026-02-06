@@ -65,6 +65,7 @@ router.post('/log', authenticateDevice, async (req, res) => {
       .from('usage_logs')
       .insert({
         device_id: req.deviceId,
+        user_id: req.userId,
         tokens_used: tokensToUse,
         model_type,
         request_type,
