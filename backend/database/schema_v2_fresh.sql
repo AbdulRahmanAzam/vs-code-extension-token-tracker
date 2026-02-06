@@ -30,6 +30,7 @@ CREATE TABLE users (
   github_id VARCHAR(100) UNIQUE,
   github_username VARCHAR(100),
   avatar_url TEXT,
+  github_access_token TEXT,
   role VARCHAR(20) DEFAULT 'user' CHECK (role IN ('user', 'admin')),
   is_active BOOLEAN DEFAULT TRUE,
   max_devices INTEGER DEFAULT 3,

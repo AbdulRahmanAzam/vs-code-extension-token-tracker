@@ -10,6 +10,7 @@ const adminRoutes = require('./routes/admin');
 const usageRoutes = require('./routes/usage');
 const healthRoutes = require('./routes/health');
 const userRoutes = require('./routes/user');
+const proxyRoutes = require('./routes/proxy');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -59,6 +60,7 @@ app.use('/api/devices', deviceRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/usage', usageRoutes);
 app.use('/api/user', userRoutes);
+app.use('/api/proxy', proxyRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {

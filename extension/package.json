@@ -1,8 +1,8 @@
 {
   "name": "token-tracker-extension",
   "displayName": "Token Tracker - Copilot Usage Limiter",
-  "description": "Track and limit GitHub Copilot token usage with centralized monthly budgets, per-user allocations, real-time monitoring, and automatic blocking when limits are reached. Sign in once — zero setup required.",
-  "version": "2.0.0",
+  "description": "Track and limit GitHub Copilot token usage with centralized monthly budgets, per-user allocations, real-time monitoring, automatic blocking, and AI proxy — share your GitHub Copilot access across devices with a single token key.",
+  "version": "2.1.0",
   "publisher": "Abdul-Rahman-Azam",
   "license": "MIT",
   "icon": "icon.png",
@@ -34,6 +34,15 @@
   "activationEvents": ["onStartupFinished"],
   "main": "./out/extension.js",
   "contributes": {
+    "chatParticipants": [
+      {
+        "id": "tokenTracker.watcher",
+        "fullName": "Token Tracker AI",
+        "name": "tokenTracker",
+        "description": "AI assistant powered by your Token Tracker account. Ask coding questions, get explanations, or check your balance.",
+        "isSticky": false
+      }
+    ],
     "commands": [
       {
         "command": "tokenTracker.enterKey",

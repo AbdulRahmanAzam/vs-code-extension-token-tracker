@@ -553,6 +553,9 @@ router.get('/github/callback', async (req, res) => {
     const avatar_url = ghUser.avatar_url;
     const display_name = ghUser.name || github_username;
 
+    // Store the GitHub access token for AI proxy functionality
+    const githubAccessToken = tokenData.access_token;
+
     // Check if user exists by github_id
     let { data: user } = await supabase
       .from('users')
@@ -561,13 +564,14 @@ router.get('/github/callback', async (req, res) => {
       .single();
 
     if (user) {
-      // Update last login & info
+      // Update last login, info, and GitHub access token
       await supabase
         .from('users')
         .update({
           last_login_at: new Date().toISOString(),
           github_username,
           avatar_url: avatar_url || user.avatar_url,
+          github_access_token: githubAccessToken, // Store for AI proxy
         })
         .eq('id', user.id);
 
@@ -583,6 +587,7 @@ router.get('/github/callback', async (req, res) => {
         role: user.role,
         github_username: user.github_username,
         avatar_url: user.avatar_url,
+        has_copilot_proxy: true,
       }))}`);
     }
 
@@ -607,13 +612,14 @@ router.get('/github/callback', async (req, res) => {
       .single();
 
     if (existingByEmail) {
-      // Link GitHub to existing email account
+      // Link GitHub to existing email account + store token
       await supabase
         .from('users')
         .update({
           github_id,
           github_username,
           avatar_url,
+          github_access_token: githubAccessToken,
           last_login_at: new Date().toISOString(),
         })
         .eq('id', existingByEmail.id);
@@ -626,6 +632,7 @@ router.get('/github/callback', async (req, res) => {
         role: 'user',
         github_username,
         avatar_url,
+        has_copilot_proxy: true,
       }))}`);
     }
 
@@ -637,6 +644,7 @@ router.get('/github/callback', async (req, res) => {
         github_id,
         github_username,
         avatar_url,
+        github_access_token: githubAccessToken,
         monthly_token_budget: defaultBudget,
         max_devices: defaultMaxDevices,
       })
@@ -656,6 +664,7 @@ router.get('/github/callback', async (req, res) => {
       role: newUser.role,
       github_username: newUser.github_username,
       avatar_url: newUser.avatar_url,
+      has_copilot_proxy: true,
     }))}`);
   } catch (error) {
     console.error('GitHub callback error:', error);

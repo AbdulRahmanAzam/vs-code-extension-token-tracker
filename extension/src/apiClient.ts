@@ -21,6 +21,7 @@ export interface RedeemResult {
   device_token: string;
   device_name: string;
   owner: string;
+  has_copilot_proxy?: boolean;
   allocation: Allocation;
 }
 
@@ -192,5 +193,138 @@ export class ApiClient {
   async getHistory(limit: number = 20): Promise<any> {
     if (!this.deviceId) { throw new Error('Not activated'); }
     return this.request('GET', `/api/devices/${this.deviceId}/history?limit=${limit}`);
+  }
+
+  // ─── Proxy endpoints (AI model access) ──────────────────
+
+  /** Check if AI proxy is available for this device */
+  async getProxyStatus(): Promise<{ available: boolean; github_username: string | null }> {
+    return this.request('GET', '/api/proxy/status');
+  }
+
+  /** Get available AI models through the proxy */
+  async getProxyModels(): Promise<{
+    available: boolean;
+    reason?: string;
+    models: { id: string; name: string; provider: string; cost: number }[];
+  }> {
+    return this.request('GET', '/api/proxy/models');
+  }
+
+  /** Send a chat completion request through the proxy */
+  async proxyChatCompletion(
+    messages: { role: string; content: string }[],
+    model: string = 'gpt-4o',
+    options: { temperature?: number; max_tokens?: number } = {}
+  ): Promise<any> {
+    return this.request('POST', '/api/proxy/chat', {
+      messages,
+      model,
+      stream: false,
+      ...options,
+    });
+  }
+
+  /** Request inline code completion through the proxy */
+  async proxyCodeCompletion(
+    prefix: string,
+    suffix: string,
+    language: string,
+    filePath: string,
+    model: string = 'gpt-4o-mini',
+    maxTokens: number = 256
+  ): Promise<{ completion: string; model: string }> {
+    return this.request('POST', '/api/proxy/completions', {
+      prefix,
+      suffix,
+      language,
+      file_path: filePath,
+      model,
+      max_tokens: maxTokens,
+    });
+  }
+
+  /** Stream a chat completion request (returns raw response chunks) */
+  streamChatCompletion(
+    messages: { role: string; content: string }[],
+    model: string = 'gpt-4o',
+    options: { temperature?: number; max_tokens?: number } = {},
+    onChunk: (chunk: string) => void,
+    onDone: () => void,
+    onError: (err: Error) => void
+  ): void {
+    const url = new URL('/api/proxy/chat', this.serverUrl);
+    const isHttps = url.protocol === 'https:';
+    const lib = isHttps ? https : http;
+
+    const bodyStr = JSON.stringify({
+      messages,
+      model,
+      stream: true,
+      ...options,
+    });
+
+    const reqOptions = {
+      hostname: url.hostname,
+      port: url.port || (isHttps ? 443 : 80),
+      path: url.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(bodyStr).toString(),
+        ...(this.deviceToken ? { Authorization: `Bearer ${this.deviceToken}` } : {}),
+      },
+      timeout: 60000,
+    };
+
+    const req = lib.request(reqOptions, (res) => {
+      if (res.statusCode && res.statusCode >= 400) {
+        let data = '';
+        res.on('data', (chunk: string) => { data += chunk; });
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data);
+            onError(new Error(parsed.error || `HTTP ${res.statusCode}`));
+          } catch {
+            onError(new Error(`HTTP ${res.statusCode}: ${data.substring(0, 200)}`));
+          }
+        });
+        return;
+      }
+
+      res.on('data', (chunk: Buffer) => {
+        const text = chunk.toString();
+        // Parse SSE events
+        const lines = text.split('\n');
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data === '[DONE]') {
+              continue;
+            }
+            try {
+              const parsed = JSON.parse(data);
+              const content = parsed.choices?.[0]?.delta?.content;
+              if (content) {
+                onChunk(content);
+              }
+            } catch {
+              // Not valid JSON, skip
+            }
+          }
+        }
+      });
+
+      res.on('end', () => onDone());
+    });
+
+    req.on('error', (err: Error) => onError(err));
+    req.on('timeout', () => {
+      req.destroy();
+      onError(new Error('Stream request timed out'));
+    });
+
+    req.write(bodyStr);
+    req.end();
   }
 }

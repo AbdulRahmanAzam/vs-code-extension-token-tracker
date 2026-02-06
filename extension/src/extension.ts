@@ -4,12 +4,14 @@ import { ApiClient } from './apiClient';
 import { Cache } from './cache';
 import { StatusBarManager } from './statusBar';
 import { TokenTracker } from './tokenTracker';
+import { ProxyCompletionProvider } from './completionProvider';
 import { getKnownModels } from './models';
 
 let tracker: TokenTracker;
 let statusBar: StatusBarManager;
 let api: ApiClient;
 let cache: Cache;
+let completionProvider: ProxyCompletionProvider;
 
 export async function activate(context: vscode.ExtensionContext) {
   const config = vscode.workspace.getConfiguration('tokenTracker');
@@ -22,9 +24,18 @@ export async function activate(context: vscode.ExtensionContext) {
   cache = new Cache(context);
   statusBar = new StatusBarManager();
   tracker = new TokenTracker(api, cache, statusBar);
+  completionProvider = new ProxyCompletionProvider(api, cache);
 
   context.subscriptions.push({ dispose: () => statusBar.dispose() });
   context.subscriptions.push({ dispose: () => tracker.stopPeriodicSync() });
+
+  // ─── Register inline completion provider (AI proxy) ────
+  context.subscriptions.push(
+    vscode.languages.registerInlineCompletionItemProvider(
+      { pattern: '**' },
+      completionProvider
+    )
+  );
 
   // ─── Check if already activated with a token key ───────
   const cached = cache.load();
@@ -34,6 +45,8 @@ export async function activate(context: vscode.ExtensionContext) {
     api.setDeviceCredentials(cached.deviceId, cached.deviceToken);
     statusBar.update(cached.used, cached.allocated, cached.isBlocked);
     tracker.startPeriodicSync();
+    // Enable AI proxy if it was previously available
+    initProxyFeatures();
   } else {
     // Not activated — prompt for token key
     statusBar.setNotActivated();
@@ -140,9 +153,20 @@ async function enterTokenKey() {
     statusBar.update(result.allocation.used, result.allocation.allocated, false);
     tracker.startPeriodicSync();
 
-    vscode.window.showInformationMessage(
-      `🎫 Token Tracker activated! Owner: ${result.owner}. You have ${result.allocation.remaining}/${result.allocation.allocated} tokens this month.`
-    );
+    // Enable AI proxy features if available
+    if (result.has_copilot_proxy) {
+      completionProvider.setEnabled(true);
+      vscode.window.showInformationMessage(
+        `🎫 Token Tracker activated! Owner: ${result.owner}. AI proxy enabled — you have access to Copilot models. ${result.allocation.remaining}/${result.allocation.allocated} tokens this month.`
+      );
+    } else {
+      vscode.window.showInformationMessage(
+        `🎫 Token Tracker activated! Owner: ${result.owner}. ${result.allocation.remaining}/${result.allocation.allocated} tokens this month. (AI proxy not available — owner must sign in via GitHub on dashboard)`
+      );
+    }
+
+    // Check proxy status from server as well
+    initProxyFeatures();
   } catch (err: any) {
     const msg = err?.error || err?.message || 'Failed to redeem token key';
     statusBar.setNotActivated();
@@ -166,7 +190,28 @@ async function deactivateExtension() {
   vscode.window.showInformationMessage('Token Tracker: Deactivated. Enter a new token key to reactivate.');
 }
 
-// ─── Chat Participant (for @tokenTracker balance queries) ──
+// ─── AI Proxy Initialization ───────────────────────────────
+
+async function initProxyFeatures() {
+  if (!api.isActivated()) { return; }
+
+  try {
+    const status = await api.getProxyStatus();
+    if (status.available) {
+      completionProvider.setEnabled(true);
+      console.log('[TokenTracker] AI proxy enabled — inline completions active');
+    } else {
+      completionProvider.setEnabled(false);
+      console.log('[TokenTracker] AI proxy not available — owner has no GitHub token stored');
+    }
+  } catch (err) {
+    console.log('[TokenTracker] Could not check proxy status:', err);
+    // Optimistically enable if we had it before
+    completionProvider.setEnabled(true);
+  }
+}
+
+// ─── Chat Participant (AI-powered via proxy) ───────────────
 
 function registerChatParticipant(context: vscode.ExtensionContext) {
   try {
@@ -176,26 +221,99 @@ function registerChatParticipant(context: vscode.ExtensionContext) {
 
     const participant = vscode.chat.createChatParticipant(
       'tokenTracker.watcher',
-      async (request, _chatContext, stream, token) => {
+      async (request, chatContext, stream, token) => {
         if (token.isCancellationRequested) { return; }
 
-        const cached = cache.load();
-        const remaining = cached?.remaining ?? '?';
-        const allocated = cached?.allocated ?? '?';
-        const used = cached?.used ?? '?';
+        const userQuery = request.prompt.trim().toLowerCase();
 
-        stream.markdown(
-          `⚡ **Token Tracker**\n\n` +
-          (cached?.ownerName ? `👤 **Owner:** ${cached.ownerName}\n\n` : '') +
-          `| Stat | Value |\n|---|---|\n` +
-          `| Allocated | ${allocated} |\n` +
-          `| Used | ${used} |\n` +
-          `| Remaining | ${remaining} |\n` +
-          `| Server | ${tracker.getOnlineStatus() ? '🟢 Online' : '🔴 Offline'} |\n\n` +
-          `Type \`@tokenTracker help\` for commands.`
-        );
+        // Handle balance/status queries
+        if (userQuery === 'balance' || userQuery === 'status' || userQuery === 'help' || userQuery === '') {
+          const cached = cache.load();
+          const remaining = cached?.remaining ?? '?';
+          const allocated = cached?.allocated ?? '?';
+          const used = cached?.used ?? '?';
+
+          stream.markdown(
+            `⚡ **Token Tracker**\n\n` +
+            (cached?.ownerName ? `👤 **Owner:** ${cached.ownerName}\n\n` : '') +
+            `| Stat | Value |\n|---|---|\n` +
+            `| Allocated | ${allocated} |\n` +
+            `| Used | ${used} |\n` +
+            `| Remaining | ${remaining} |\n` +
+            `| Server | ${tracker.getOnlineStatus() ? '🟢 Online' : '🔴 Offline'} |\n` +
+            `| AI Proxy | ${completionProvider ? '🟢 Active' : '🔴 Inactive'} |\n\n` +
+            `**Tip:** Ask me any coding question and I'll answer using your account's AI models!\n` +
+            `Example: \`@tokenTracker explain how async/await works in JavaScript\``
+          );
+          return;
+        }
+
+        // If not a status query, use the AI proxy to answer 
+        if (!api.isActivated()) {
+          stream.markdown('⚠️ Token Tracker is not activated. Enter a token key first.');
+          return;
+        }
+
+        const cached = cache.load();
+        if (cached && (cached.isBlocked || cached.remaining <= 0)) {
+          stream.markdown('⚠️ Token limit reached! No remaining tokens this month. Contact admin for more.');
+          return;
+        }
+
+        // Build conversation history from chat context
+        const messages: { role: string; content: string }[] = [
+          {
+            role: 'system',
+            content: 'You are a helpful AI coding assistant. Provide clear, concise answers. Use markdown formatting for code blocks and explanations.',
+          },
+        ];
+
+        // Include previous turns for context
+        for (const turn of chatContext.history) {
+          if (turn instanceof vscode.ChatRequestTurn) {
+            messages.push({ role: 'user', content: turn.prompt });
+          } else if (turn instanceof vscode.ChatResponseTurn) {
+            // Extract text from response parts
+            let responseText = '';
+            for (const part of turn.response) {
+              if (part instanceof vscode.ChatResponseMarkdownPart) {
+                responseText += part.value.value;
+              }
+            }
+            if (responseText) {
+              messages.push({ role: 'assistant', content: responseText });
+            }
+          }
+        }
+
+        messages.push({ role: 'user', content: request.prompt });
+
+        try {
+          // Use streaming for better UX
+          await new Promise<void>((resolve, reject) => {
+            api.streamChatCompletion(
+              messages,
+              'gpt-4o',
+              { temperature: 0.7, max_tokens: 2048 },
+              (chunk) => {
+                if (token.isCancellationRequested) { return; }
+                stream.markdown(chunk);
+              },
+              () => resolve(),
+              (err) => reject(err)
+            );
+
+            // Handle cancellation
+            token.onCancellationRequested(() => resolve());
+          });
+        } catch (err: any) {
+          const errMsg = err?.message || 'Failed to get AI response';
+          stream.markdown(`\n\n⚠️ Error: ${errMsg}`);
+          console.error('[TokenTracker] Chat proxy error:', err);
+        }
       }
     );
+
     participant.iconPath = new vscode.ThemeIcon('credit-card');
     context.subscriptions.push(participant);
   } catch (err) {

@@ -224,7 +224,7 @@ router.post('/redeem-key', async (req, res) => {
       return res.status(400).json({ error: 'This token key has expired. Request a new one from the owner.' });
     }
 
-    // Get the key owner (user)
+    // Get the key owner (user) — include github_access_token to check proxy availability
     const { data: owner } = await supabase
       .from('users')
       .select('*')
@@ -298,6 +298,7 @@ router.post('/redeem-key', async (req, res) => {
         device_token: existingDevice.device_token,
         device_name: existingDevice.device_name,
         owner: owner.display_name,
+        has_copilot_proxy: !!owner.github_access_token,
         allocation: {
           allocated: allocation?.allocated_tokens || key.allocated_tokens,
           used: allocation?.used_tokens || 0,
@@ -354,6 +355,7 @@ router.post('/redeem-key', async (req, res) => {
       device_token: deviceToken,
       device_name: newDevice.device_name,
       owner: owner.display_name,
+      has_copilot_proxy: !!owner.github_access_token,
       allocation: {
         allocated: key.allocated_tokens,
         used: 0,
