@@ -2,7 +2,7 @@
   "name": "token-tracker-extension",
   "displayName": "Token Tracker - Copilot Usage Limiter",
   "description": "Track and limit GitHub Copilot token usage across devices with centralized monthly budgets, per-device allocations, real-time monitoring, and automatic blocking when limits are reached.",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "publisher": "Abdul-Rahman-Azam",
   "license": "MIT",
   "icon": "icon.png",
@@ -56,7 +56,7 @@
       "properties": {
         "tokenTracker.serverUrl": {
           "type": "string",
-          "default": "http://192.168.100.6:3000",
+          "default": "http://localhost:3000",
           "description": "URL of the central token tracking server"
         },
         "tokenTracker.enabled": {

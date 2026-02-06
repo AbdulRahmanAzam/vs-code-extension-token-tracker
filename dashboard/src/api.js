@@ -1,4 +1,6 @@
-const API_BASE = '/api';
+// In dev, Vite proxies /api → localhost:3000
+// In production (Vercel), VITE_API_URL must point to the deployed backend
+const API_BASE = (import.meta.env.VITE_API_URL || '') + '/api';
 
 class Api {
   constructor() {

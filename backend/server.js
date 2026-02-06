@@ -13,7 +13,30 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, curl, extensions)
+    if (!origin) return callback(null, true);
+    // Allow any localhost, any vercel preview, or custom domains
+    const allowed = [
+      /^https?:\/\/localhost(:\d+)?$/,
+      /^https?:\/\/127\.0\.0\.1(:\d+)?$/,
+      /^https?:\/\/192\.168\.\d+\.\d+(:\d+)?$/,
+      /\.vercel\.app$/,
+      /abdulrahmanazam\.me$/,
+    ];
+    if (allowed.some(pattern => pattern.test(origin))) {
+      return callback(null, true);
+    }
+    // Also allow if ALLOWED_ORIGINS env var is set
+    const extra = (process.env.ALLOWED_ORIGINS || '').split(',').filter(Boolean);
+    if (extra.includes(origin)) {
+      return callback(null, true);
+    }
+    callback(null, true); // Allow all for now — tighten in production if needed
+  },
+  credentials: true,
+}));
 app.use(express.json());
 
 // Rate limiting
@@ -59,10 +82,8 @@ app.use((req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Token Tracker API running on port ${PORT}`);
   console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`\n📡 Network Access:`);
-  console.log(`   Local:   http://localhost:${PORT}`);
-  console.log(`   Network: http://192.168.100.6:${PORT}`);
-  console.log(`\n⚙️  Configure other devices with: "tokenTracker.serverUrl": "http://192.168.100.6:${PORT}"\n`);
+  console.log(`\n📡 Access: http://localhost:${PORT}`);
+  console.log(`\n⚙️  Extension setting: "tokenTracker.serverUrl": "http://YOUR_SERVER_IP:${PORT}"\n`);
 });
 
 module.exports = app;
