@@ -6,6 +6,7 @@ class Api {
   constructor() {
     this.token = localStorage.getItem('tt_token') || null;
     this.user = JSON.parse(localStorage.getItem('tt_user') || 'null');
+    this._inflight = new Map(); // deduplicate concurrent identical GET requests
   }
 
   setAuth(token, user) {
@@ -64,6 +65,21 @@ class Api {
     return data;
   }
 
+  /**
+   * Deduplicating GET — if an identical GET is already in-flight, return the same promise.
+   * Prevents stacking duplicate calls from useEffect, polling, and rapid user retries.
+   */
+  async deduplicatedGet(path) {
+    if (this._inflight.has(path)) {
+      return this._inflight.get(path);
+    }
+    const promise = this.request('GET', path).finally(() => {
+      this._inflight.delete(path);
+    });
+    this._inflight.set(path, promise);
+    return promise;
+  }
+
   // ─── Auth ─────────────────────
   register(email, password, display_name, invite_token) {
     return this.request('POST', '/auth/register', { email, password, display_name, invite_token });
@@ -79,7 +95,7 @@ class Api {
 
   // ─── User Dashboard ──────────
   getUserDashboard() {
-    return this.request('GET', '/user/dashboard');
+    return this.deduplicatedGet('/user/dashboard');
   }
 
   generateTokenKey(label, allocated_tokens, expires_days) {
@@ -112,11 +128,11 @@ class Api {
 
   // ─── Admin (for admin role users) ────
   getAdminDashboard() {
-    return this.request('GET', '/admin/dashboard');
+    return this.deduplicatedGet('/admin/dashboard');
   }
 
   getAdminUsers() {
-    return this.request('GET', '/admin/users');
+    return this.deduplicatedGet('/admin/users');
   }
 
   updateUser(userId, updates) {
@@ -128,7 +144,7 @@ class Api {
   }
 
   getInvites() {
-    return this.request('GET', '/admin/invites');
+    return this.deduplicatedGet('/admin/invites');
   }
 
   createInvite(monthlyBudget = 50, maxDevices = 3, expiresInDays = 30) {

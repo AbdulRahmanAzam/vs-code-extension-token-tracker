@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../api';
 import { useToast } from '../components/Toast';
 import { DeviceCard } from '../components/DeviceCard';
@@ -14,8 +14,7 @@ import {
 export default function Dashboard({ onLogout }) {
   const toast = useToast();
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('devices');
 
   // Token key generation
@@ -32,21 +31,32 @@ export default function Dashboard({ onLogout }) {
   // Modals
   const [modal, setModal] = useState(null);
 
+  // Per-action loading states — track which items are being mutated
+  const [busyDevices, setBusyDevices] = useState(new Set());
+  const [busyKeys, setBusyKeys] = useState(new Set());
+
   const currentUser = api.getUser();
   const isAdmin = api.isAdmin();
+  const mountedRef = useRef(true);
 
-  // ─── Load User Dashboard ─────────────────
-  const fetchDashboard = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    else setRefreshing(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  // ─── Load User Dashboard (silent — never shows a full-page loader after first load) ─────
+  const fetchDashboard = useCallback(async () => {
     try {
       const res = await api.getUserDashboard();
-      setData(res);
+      if (mountedRef.current) {
+        setData(res);
+        setInitialLoading(false);
+      }
     } catch (err) {
-      toast.error('Failed to load dashboard: ' + err.message);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (mountedRef.current) {
+        setInitialLoading(false);
+        toast.error('Failed to load dashboard: ' + err.message);
+      }
     }
   }, [toast]);
 
@@ -54,17 +64,17 @@ export default function Dashboard({ onLogout }) {
     setAdminLoading(true);
     try {
       const res = await api.getAdminDashboard();
-      setAdminData(res);
+      if (mountedRef.current) setAdminData(res);
     } catch (err) {
       toast.error('Admin dashboard error: ' + err.message);
     } finally {
-      setAdminLoading(false);
+      if (mountedRef.current) setAdminLoading(false);
     }
   }, [toast]);
 
   useEffect(() => {
     fetchDashboard();
-    const interval = setInterval(() => fetchDashboard(true), 30000);
+    const interval = setInterval(fetchDashboard, 30000);
     return () => clearInterval(interval);
   }, [fetchDashboard]);
 
@@ -73,6 +83,29 @@ export default function Dashboard({ onLogout }) {
       fetchAdminData();
     }
   }, [activeTab, isAdmin, fetchAdminData]);
+
+  // ─── Helpers ───────────────────
+  /** Background sync after any mutation — don't touch UI until data arrives */
+  const syncAfterMutation = () => {
+    // Small delay to let DB propagate, then silently refetch
+    setTimeout(fetchDashboard, 300);
+  };
+
+  const markDeviceBusy = (id, busy) => {
+    setBusyDevices(prev => {
+      const next = new Set(prev);
+      busy ? next.add(id) : next.delete(id);
+      return next;
+    });
+  };
+
+  const markKeyBusy = (id, busy) => {
+    setBusyKeys(prev => {
+      const next = new Set(prev);
+      busy ? next.add(id) : next.delete(id);
+      return next;
+    });
+  };
 
   // ─── Token Key Actions ────────────────
   const handleGenerateKey = async () => {
@@ -87,7 +120,7 @@ export default function Dashboard({ onLogout }) {
       setGeneratedKey(res.key?.token_key || res.token_key);
       toast.success('Token key generated!');
       setKeyLabel('');
-      fetchDashboard(true);
+      syncAfterMutation();
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -96,61 +129,116 @@ export default function Dashboard({ onLogout }) {
   };
 
   const handleDeleteKey = async (keyId) => {
+    markKeyBusy(keyId, true);
     try {
+      // Optimistic: remove key from UI immediately
+      setData(prev => prev ? {
+        ...prev,
+        token_keys: (prev.token_keys || []).filter(k => k.id !== keyId),
+      } : prev);
       await api.deleteTokenKey(keyId);
       toast.success('Token key deleted');
-      fetchDashboard(true);
+      syncAfterMutation();
     } catch (err) {
       toast.error(err.message);
+      fetchDashboard(); // rollback
+    } finally {
+      markKeyBusy(keyId, false);
     }
   };
 
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text);
     toast.success('Copied to clipboard!');
+    // NO refetch — just a clipboard action
   };
 
   // ─── Device Actions ───────────────────
   const handleBlock = async (deviceId, blocked) => {
+    markDeviceBusy(deviceId, true);
     try {
+      // Optimistic: update device card immediately
+      setData(prev => prev ? {
+        ...prev,
+        devices: (prev.devices || []).map(d =>
+          d.id === deviceId ? { ...d, is_blocked: blocked } : d
+        ),
+      } : prev);
       await api.blockDevice(deviceId, blocked);
       toast.success(blocked ? 'Device blocked' : 'Device unblocked');
-      fetchDashboard(true);
+      syncAfterMutation();
     } catch (err) {
       toast.error(err.message);
+      fetchDashboard(); // rollback
+    } finally {
+      markDeviceBusy(deviceId, false);
     }
   };
 
   const handleSetAllocation = async (deviceId, tokens) => {
+    markDeviceBusy(deviceId, true);
     try {
+      // Optimistic
+      setData(prev => prev ? {
+        ...prev,
+        devices: (prev.devices || []).map(d =>
+          d.id === deviceId ? {
+            ...d,
+            allocation: { ...d.allocation, allocated: tokens, remaining: tokens - d.allocation.used },
+          } : d
+        ),
+      } : prev);
       await api.setDeviceAllocation(deviceId, tokens);
       toast.success('Allocation updated');
       setModal(null);
-      fetchDashboard(true);
+      syncAfterMutation();
     } catch (err) {
       toast.error(err.message);
+      fetchDashboard();
+    } finally {
+      markDeviceBusy(deviceId, false);
     }
   };
 
   const handleRename = async (deviceId, newName) => {
+    markDeviceBusy(deviceId, true);
     try {
+      // Optimistic
+      setData(prev => prev ? {
+        ...prev,
+        devices: (prev.devices || []).map(d =>
+          d.id === deviceId ? { ...d, name: newName } : d
+        ),
+      } : prev);
       await api.renameDevice(deviceId, newName);
       toast.success('Device renamed');
       setModal(null);
-      fetchDashboard(true);
+      syncAfterMutation();
     } catch (err) {
       toast.error(err.message);
+      fetchDashboard();
+    } finally {
+      markDeviceBusy(deviceId, false);
     }
   };
 
   const handleDeleteDevice = async (device) => {
+    markDeviceBusy(device.id, true);
     try {
+      // Optimistic
+      setData(prev => prev ? {
+        ...prev,
+        devices: (prev.devices || []).filter(d => d.id !== device.id),
+      } : prev);
       await api.deleteDevice(device.id);
       toast.success(`${device.name} deleted`);
       setModal(null);
-      fetchDashboard(true);
+      syncAfterMutation();
     } catch (err) {
       toast.error(err.message);
+      fetchDashboard();
+    } finally {
+      markDeviceBusy(device.id, false);
     }
   };
 
@@ -177,22 +265,64 @@ export default function Dashboard({ onLogout }) {
 
   const handleDeleteUser = async (user) => {
     try {
+      // Optimistic
+      setAdminData(prev => prev ? {
+        ...prev,
+        users: {
+          ...prev.users,
+          count: (prev.users?.count || 1) - 1,
+          list: (prev.users?.list || []).filter(u => u.id !== user.id),
+        },
+      } : prev);
       await api.deleteUser(user.id);
       toast.success(`User ${user.email} deleted`);
       setModal(null);
       fetchAdminData();
     } catch (err) {
       toast.error(err.message);
+      fetchAdminData(); // rollback
     }
   };
 
-  // ─── Loading ──────────────────────────
-  if (loading || !data) {
+  // ─── Initial Skeleton Loading ──────────
+  if (initialLoading && !data) {
     return (
-      <div className="loading-page">
-        <div className="spinner" style={{ width: 32, height: 32 }} />
-        <span>Loading dashboard…</span>
-      </div>
+      <>
+        <nav className="topnav">
+          <div className="topnav-inner">
+            <div className="topnav-brand">
+              <div className="logo-icon">⚡</div>
+              <span className="brand-text">Token Tracker</span>
+            </div>
+            <div className="topnav-actions">
+              <ThemeToggle />
+            </div>
+          </div>
+        </nav>
+        <main className="container" style={{ paddingTop: '28px' }}>
+          <div className="stats-grid">
+            {[1, 2, 3, 4].map(i => (
+              <div key={i} className="stat-card" style={{ minHeight: 110 }}>
+                <div className="skeleton-line" style={{ width: '60%', height: 12, marginBottom: 12 }} />
+                <div className="skeleton-line" style={{ width: '40%', height: 32, marginBottom: 8 }} />
+                <div className="skeleton-line" style={{ width: '50%', height: 10 }} />
+              </div>
+            ))}
+          </div>
+          <div className="card" style={{ marginBottom: 28 }}>
+            <div className="skeleton-line" style={{ width: '100%', height: 10, borderRadius: 99 }} />
+          </div>
+          <div className="devices-grid">
+            {[1, 2].map(i => (
+              <div key={i} className="device-card" style={{ minHeight: 150 }}>
+                <div className="skeleton-line" style={{ width: '70%', height: 14, marginBottom: 16 }} />
+                <div className="skeleton-line" style={{ width: '100%', height: 10, borderRadius: 99, marginBottom: 12 }} />
+                <div className="skeleton-line" style={{ width: '50%', height: 12 }} />
+              </div>
+            ))}
+          </div>
+        </main>
+      </>
     );
   }
 
@@ -232,8 +362,7 @@ export default function Dashboard({ onLogout }) {
               <span className="pulse" />
               LIVE
             </div>
-            {refreshing && <div className="spinner" />}
-            <button className="btn btn-sm" onClick={() => fetchDashboard(true)}>
+            <button className="btn btn-sm" onClick={fetchDashboard}>
               ↻ Sync
             </button>
             <button className="btn btn-sm btn-danger" onClick={onLogout}>
