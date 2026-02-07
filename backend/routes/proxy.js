@@ -24,7 +24,7 @@ const PROXY_MODELS = [
   { id: 'gpt-4.1-nano', name: 'GPT-4.1 Nano', provider: 'openai', cost: 0 },
   { id: 'claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', provider: 'anthropic', cost: 1 },
   { id: 'claude-sonnet-4', name: 'Claude Sonnet 4', provider: 'anthropic', cost: 1 },
-  { id: 'claude-opus-4', name: 'Claude Opus 4', provider: 'anthropic', cost: 3 },
+  { id: 'claude-opus-4.5', name: 'Claude Opus 4.5', provider: 'anthropic', cost: 3 },
 ];
 
 /**
