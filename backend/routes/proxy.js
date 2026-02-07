@@ -329,14 +329,24 @@ router.post('/completions', authenticateDevice, async (req, res) => {
 /**
  * Helper: Log proxy usage and update token allocation
  */
-async function logProxyUsage(deviceId, userId, modelType, requestType, currentMonth, allocation) {
+async function logProxyUsage(deviceId, userId, modelType, requestType, currentMonth, _allocation) {
   try {
     const tokenCost = calculateTokens(modelType);
 
-    // Update allocation
+    // Re-fetch the latest allocation to avoid stale data race conditions
+    const { data: freshAllocation } = await supabase
+      .from('token_allocations')
+      .select('*')
+      .eq('device_id', deviceId)
+      .eq('month_year', currentMonth)
+      .single();
+
+    const currentUsed = freshAllocation?.used_tokens || _allocation?.used_tokens || 0;
+
+    // Update allocation with fresh data
     await supabase
       .from('token_allocations')
-      .update({ used_tokens: (allocation.used_tokens || 0) + tokenCost })
+      .update({ used_tokens: currentUsed + tokenCost })
       .eq('device_id', deviceId)
       .eq('month_year', currentMonth);
 

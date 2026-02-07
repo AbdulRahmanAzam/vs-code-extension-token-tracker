@@ -292,11 +292,19 @@ export class ApiClient {
         return;
       }
 
+      // Buffer for incomplete SSE lines across TCP chunks
+      let sseBuffer = '';
+      let receivedAnyContent = false;
+
       res.on('data', (chunk: Buffer) => {
-        const text = chunk.toString();
-        // Parse SSE events
-        const lines = text.split('\n');
-        for (const line of lines) {
+        sseBuffer += chunk.toString();
+
+        // Process all complete lines from the buffer
+        let newlineIdx: number;
+        while ((newlineIdx = sseBuffer.indexOf('\n')) !== -1) {
+          const line = sseBuffer.substring(0, newlineIdx).trimEnd();
+          sseBuffer = sseBuffer.substring(newlineIdx + 1);
+
           if (line.startsWith('data: ')) {
             const data = line.slice(6);
             if (data === '[DONE]') {
@@ -306,16 +314,44 @@ export class ApiClient {
               const parsed = JSON.parse(data);
               const content = parsed.choices?.[0]?.delta?.content;
               if (content) {
+                receivedAnyContent = true;
                 onChunk(content);
               }
             } catch {
-              // Not valid JSON, skip
+              // Incomplete JSON — should not happen with proper line buffering
+              // but skip gracefully
             }
           }
         }
       });
 
-      res.on('end', () => onDone());
+      res.on('end', () => {
+        // Process any remaining data in the buffer
+        if (sseBuffer.trim()) {
+          const line = sseBuffer.trim();
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data !== '[DONE]') {
+              try {
+                const parsed = JSON.parse(data);
+                const content = parsed.choices?.[0]?.delta?.content;
+                if (content) {
+                  receivedAnyContent = true;
+                  onChunk(content);
+                }
+              } catch {
+                // Skip
+              }
+            }
+          }
+        }
+
+        if (!receivedAnyContent) {
+          onError(new Error('No content received from AI proxy. The owner may need to update their GitHub PAT in the dashboard.'));
+        } else {
+          onDone();
+        }
+      });
     });
 
     req.on('error', (err: Error) => onError(err));

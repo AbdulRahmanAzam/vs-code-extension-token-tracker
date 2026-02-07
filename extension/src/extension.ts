@@ -13,6 +13,9 @@ let api: ApiClient;
 let cache: Cache;
 let completionProvider: ProxyCompletionProvider;
 
+// Guard to avoid showing proxy notification every sync cycle
+let proxyNotificationShown = false;
+
 export async function activate(context: vscode.ExtensionContext) {
   const config = vscode.workspace.getConfiguration('tokenTracker');
   if (!config.get<boolean>('enabled', true)) {
@@ -216,22 +219,26 @@ async function initProxyFeatures() {
       console.log('[TokenTracker] AI proxy enabled — inline completions active');
 
       // Check if GitHub Copilot is signed in
-      try {
-        const hasNativeModels = vscode.lm && await vscode.lm.selectChatModels().then(m => m.length > 0);
+      // Show a one-time notification that proxy is available
+      if (!proxyNotificationShown) {
+        proxyNotificationShown = true;
+        try {
+          const hasNativeModels = vscode.lm && await vscode.lm.selectChatModels().then(m => m.length > 0);
 
-        if (!hasNativeModels) {
-          // No native Copilot models, but proxy is available
-          vscode.window.showInformationMessage(
-            '⚡ Token Tracker: AI models available via proxy! Use @tokenTracker in chat or get inline completions without GitHub sign-in.',
-            'Try @tokenTracker'
-          ).then(selection => {
-            if (selection === 'Try @tokenTracker') {
-              vscode.commands.executeCommand('workbench.action.chat.open', { query: '@tokenTracker' });
-            }
-          });
+          if (!hasNativeModels) {
+            // No native Copilot models, but proxy is available
+            vscode.window.showInformationMessage(
+              '⚡ Token Tracker: AI models available via proxy! Use @tokenTracker in chat or get inline completions without GitHub sign-in.',
+              'Try @tokenTracker'
+            ).then(selection => {
+              if (selection === 'Try @tokenTracker') {
+                vscode.commands.executeCommand('workbench.action.chat.open', { query: '@tokenTracker' });
+              }
+            });
+          }
+        } catch {
+          // Ignore - LM API might not be available
         }
-      } catch {
-        // Ignore - LM API might not be available
       }
     } else {
       completionProvider.setEnabled(false);
@@ -274,7 +281,7 @@ function registerChatParticipant(context: vscode.ExtensionContext) {
             `| Used | ${used} |\n` +
             `| Remaining | ${remaining} |\n` +
             `| Server | ${tracker.getOnlineStatus() ? '🟢 Online' : '🔴 Offline'} |\n` +
-            `| AI Proxy | ${completionProvider ? '🟢 Active' : '🔴 Inactive'} |\n\n` +
+            `| AI Proxy | ${completionProvider?.isEnabled() ? '🟢 Active' : '🔴 Inactive'} |\n\n` +
             `**Tip:** Ask me any coding question and I'll answer using your account's AI models!\n` +
             `Example: \`@tokenTracker explain how async/await works in JavaScript\``
           );
@@ -322,6 +329,20 @@ function registerChatParticipant(context: vscode.ExtensionContext) {
         messages.push({ role: 'user', content: request.prompt });
 
         try {
+          // Check proxy availability first
+          const proxyCheck = await api.getProxyStatus().catch(() => ({ available: false, github_username: null }));
+          if (!proxyCheck.available) {
+            stream.markdown(
+              `⚠️ **AI Proxy Unavailable**\n\n` +
+              `The account owner has not configured a GitHub Personal Access Token (PAT) yet.\n\n` +
+              `Ask the account owner to:\n` +
+              `1. Go to GitHub → Settings → Developer settings → Personal access tokens\n` +
+              `2. Create a token with \`models:read\` scope\n` +
+              `3. Save it in the Token Tracker dashboard under **Settings**`
+            );
+            return;
+          }
+
           // Use streaming for better UX
           await new Promise<void>((resolve, reject) => {
             api.streamChatCompletion(
@@ -341,7 +362,13 @@ function registerChatParticipant(context: vscode.ExtensionContext) {
           });
         } catch (err: any) {
           const errMsg = err?.message || 'Failed to get AI response';
-          stream.markdown(`\n\n⚠️ Error: ${errMsg}`);
+          stream.markdown(
+            `\n\n⚠️ **Error:** ${errMsg}\n\n` +
+            `**Troubleshooting:**\n` +
+            `- Check that the Token Tracker server is online\n` +
+            `- Verify the account owner's GitHub PAT is valid\n` +
+            `- Run \`@tokenTracker status\` to see your connection info`
+          );
           console.error('[TokenTracker] Chat proxy error:', err);
         }
       }

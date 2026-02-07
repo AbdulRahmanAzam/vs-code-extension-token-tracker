@@ -21,14 +21,15 @@ export class TokenTracker {
   private syncInterval: ReturnType<typeof setInterval> | undefined;
   private copilotBlocked: boolean = false;
 
+  // Save original inlineSuggest.enabled value before overwriting
+  private originalInlineSuggestEnabled: boolean | undefined = undefined;
+
   // Debounce: avoid double-counting rapid events
   private lastLoggedAt: number = 0;
   private readonly DEBOUNCE_MS = 3000;
 
   // Inline completion tracking
-  private lastDocVersion: Map<string, number> = new Map();
   private lastUserTypingAt: number = 0;
-  private pendingInserts: number = 0;
 
   // Wrapped models cache
   private wrappedModels: WeakSet<vscode.LanguageModelChat> = new WeakSet();
@@ -381,8 +382,14 @@ export class TokenTracker {
   private blockCopilot(): void {
     this.copilotBlocked = true;
 
-    // Disable inline suggestions via settings
+    // Save the original value before overwriting
     const config = vscode.workspace.getConfiguration('editor');
+    const currentValue = config.get<boolean>('inlineSuggest.enabled');
+    if (this.originalInlineSuggestEnabled === undefined) {
+      this.originalInlineSuggestEnabled = currentValue ?? true;
+    }
+
+    // Disable inline suggestions via settings
     config.update('inlineSuggest.enabled', false, vscode.ConfigurationTarget.Global);
 
     // Disable Copilot completions panel
@@ -394,9 +401,11 @@ export class TokenTracker {
   private unblockCopilot(): void {
     this.copilotBlocked = false;
 
-    // Re-enable inline suggestions
+    // Restore the original inline suggestions value
     const config = vscode.workspace.getConfiguration('editor');
-    config.update('inlineSuggest.enabled', true, vscode.ConfigurationTarget.Global);
+    const restoreValue = this.originalInlineSuggestEnabled ?? true;
+    config.update('inlineSuggest.enabled', restoreValue, vscode.ConfigurationTarget.Global);
+    this.originalInlineSuggestEnabled = undefined;
 
     vscode.commands.executeCommand('setContext', 'tokenTracker.blocked', false);
     vscode.window.showInformationMessage('Token Tracker: Copilot re-enabled!');

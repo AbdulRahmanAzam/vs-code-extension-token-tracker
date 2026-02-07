@@ -31,6 +31,11 @@ export class ProxyCompletionProvider implements vscode.InlineCompletionItemProvi
     this.enabled = enabled;
   }
 
+  /** Check if the provider is currently enabled */
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
   /** Set the model for inline completions */
   setModel(model: string): void {
     this.completionModel = model;

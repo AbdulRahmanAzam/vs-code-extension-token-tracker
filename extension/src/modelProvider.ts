@@ -68,7 +68,22 @@ export class ProxyModelProvider {
             token?: vscode.CancellationToken
           ): Promise<number> => {
             // Rough estimate: 1 token per 4 characters
-            const content = typeof text === 'string' ? text : text.content;
+            let content: string;
+            if (typeof text === 'string') {
+              content = text;
+            } else if (text && typeof text === 'object' && 'content' in text) {
+              // LanguageModelChatMessage.content is LanguageModelTextPart[]
+              const parts = text.content;
+              if (typeof parts === 'string') {
+                content = parts;
+              } else if (Array.isArray(parts)) {
+                content = parts.map((p: any) => ('value' in p ? p.value : String(p))).join('\n');
+              } else {
+                content = String(parts);
+              }
+            } else {
+              content = String(text);
+            }
             return Math.ceil(content.length / 4);
           },
         };

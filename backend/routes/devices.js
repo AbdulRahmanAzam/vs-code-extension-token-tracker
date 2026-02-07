@@ -97,11 +97,17 @@ router.post('/register', async (req, res) => {
     }
     
     // Generate device token
+    // NOTE: This legacy route creates devices without a user_id.
+    // The preferred flow is via POST /api/user/redeem-key (token key based).
+    // We need a placeholder user_id or this route must be deprecated.
     const deviceId = require('uuid').v4();
-    const deviceToken = generateDeviceToken(deviceId, hardware_fingerprint);
+    // Legacy route: no user context available, pass null for userId
+    const deviceToken = generateDeviceToken(deviceId, null, hardware_fingerprint);
     const currentMonth = getCurrentMonth();
     
-    // Create device
+    // Create device — legacy route without user association
+    // This will fail if user_id is NOT NULL in schema. 
+    // Devices should be created via redeem-key or link-device routes.
     const { data: newDevice, error: deviceError } = await supabase
       .from('devices')
       .insert({
@@ -332,6 +338,7 @@ router.post('/:id/usage', authenticateDevice, async (req, res) => {
       .from('usage_logs')
       .insert({
         device_id: deviceId,
+        user_id: req.userId,
         tokens_used: tokensToUse,
         model_type,
         request_type,
