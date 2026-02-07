@@ -7,9 +7,10 @@ const { calculateTokens, getCurrentMonth } = require('../utils/helpers');
 /**
  * GitHub Models API endpoint.
  * This is the public GitHub-hosted inference API that works with
- * GitHub personal access tokens and (some) OAuth tokens.
+ * GitHub personal access tokens with `models:read` scope.
+ * The correct endpoint is models.github.ai, NOT models.inference.ai.azure.com
  */
-const GITHUB_MODELS_API = 'https://models.inference.ai.azure.com';
+const GITHUB_MODELS_API = 'https://models.github.ai/inference';
 
 /**
  * Default models available through GitHub Models / Copilot.

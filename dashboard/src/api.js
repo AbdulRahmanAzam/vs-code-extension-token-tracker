@@ -163,6 +163,19 @@ class Api {
     return this.request('PUT', '/admin/settings', { settings });
   }
 
+  // ─── GitHub PAT / Proxy ────────
+  saveGitHubPat(github_pat) {
+    return this.request('POST', '/auth/save-github-pat', { github_pat });
+  }
+
+  removeGitHubPat() {
+    return this.request('DELETE', '/auth/github-pat');
+  }
+
+  getProxyStatus() {
+    return this.request('GET', '/auth/proxy-status');
+  }
+
   // ─── Health ───────────────────
   healthCheck() {
     return this.request('GET', '/health');

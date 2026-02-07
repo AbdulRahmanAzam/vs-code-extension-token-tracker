@@ -47,6 +47,11 @@ export async function activate(context: vscode.ExtensionContext) {
     tracker.startPeriodicSync();
     // Enable AI proxy if it was previously available
     initProxyFeatures();
+
+    // Set up callback to refresh proxy status on each sync
+    tracker.setOnSyncCallback(() => {
+      initProxyFeatures();
+    });
   } else {
     // Not activated — prompt for token key
     statusBar.setNotActivated();
@@ -200,11 +205,11 @@ async function initProxyFeatures() {
     if (status.available) {
       completionProvider.setEnabled(true);
       console.log('[TokenTracker] AI proxy enabled — inline completions active');
-      
+
       // Check if GitHub Copilot is signed in
       try {
         const hasNativeModels = vscode.lm && await vscode.lm.selectChatModels().then(m => m.length > 0);
-        
+
         if (!hasNativeModels) {
           // No native Copilot models, but proxy is available
           vscode.window.showInformationMessage(
@@ -427,9 +432,9 @@ async function showBalance() {
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
           <h3 style="margin:0;">Balance — ${cached.month || 'Current Month'}</h3>
-          ${proxyStatus.available 
-            ? '<span class="proxy-badge">⚡ AI Proxy Active</span>' 
-            : '<span class="proxy-badge inactive">AI Proxy Offline</span>'}
+          ${proxyStatus.available
+      ? '<span class="proxy-badge">⚡ AI Proxy Active</span>'
+      : '<span class="proxy-badge inactive">AI Proxy Offline</span>'}
         </div>
         <div class="bar-container">
           <div class="bar" style="width: ${Math.max(barWidth, 2)}%; background: ${barColor};">${barWidth}%</div>
@@ -439,10 +444,10 @@ async function showBalance() {
         <div class="stat"><span class="label">Remaining</span><strong>${cached.remaining}</strong></div>
         <div class="stat"><span class="label">Status</span>
           ${cached.isBlocked
-            ? '<span class="status blocked">BLOCKED</span>'
-            : cached.remaining <= 0
-              ? '<span class="status offline">LIMIT REACHED</span>'
-              : '<span class="status online">Active</span>'}
+      ? '<span class="status blocked">BLOCKED</span>'
+      : cached.remaining <= 0
+        ? '<span class="status offline">LIMIT REACHED</span>'
+        : '<span class="status online">Active</span>'}
         </div>
         <div class="stat"><span class="label">Server</span>
           <span class="status ${tracker.getOnlineStatus() ? 'online' : 'offline'}">${tracker.getOnlineStatus() ? 'Online' : 'Offline'}</span>

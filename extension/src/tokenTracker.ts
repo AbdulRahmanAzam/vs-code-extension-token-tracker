@@ -56,6 +56,7 @@ export class TokenTracker {
       );
       this.statusBar.update(balance.used, balance.allocated, balance.is_blocked);
       this.checkAndEnforceLimits();
+      this.notifySyncComplete();
     } catch {
       this.isOnline = false;
       const cached = this.cache.load();
@@ -75,6 +76,19 @@ export class TokenTracker {
     if (this.syncInterval) {
       clearInterval(this.syncInterval);
       this.syncInterval = undefined;
+    }
+  }
+
+  /** Set callback for when online status changes (for proxy refresh) */
+  private onSyncCallback: (() => void) | undefined;
+  setOnSyncCallback(callback: () => void): void {
+    this.onSyncCallback = callback;
+  }
+
+  /** Call the sync callback if set */
+  private notifySyncComplete(): void {
+    if (this.onSyncCallback) {
+      this.onSyncCallback();
     }
   }
 
@@ -187,7 +201,7 @@ export class TokenTracker {
           return;
         }
         if (e.reason === vscode.TextDocumentChangeReason.Undo ||
-            e.reason === vscode.TextDocumentChangeReason.Redo) {
+          e.reason === vscode.TextDocumentChangeReason.Redo) {
           return;
         }
 
@@ -296,7 +310,7 @@ export class TokenTracker {
       try {
         const result = await this.api.logUsage(model.trackingName, requestType);
         console.log(`[TokenTracker] Server logged: ${model.trackingName}, remaining=${result.remaining}`);
-        
+
         this.cache.updateBalance(
           cached?.allocated ?? 50,
           (cached?.allocated ?? 50) - result.remaining,

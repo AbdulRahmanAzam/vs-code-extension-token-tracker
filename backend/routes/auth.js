@@ -672,4 +672,129 @@ router.get('/github/callback', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/auth/save-github-pat
+ * Save a GitHub Personal Access Token for AI proxy functionality
+ * The PAT must have `models:read` scope for GitHub Models API access
+ */
+router.post('/save-github-pat', authenticateUser, async (req, res) => {
+  try {
+    const { github_pat } = req.body;
+
+    if (!github_pat || !github_pat.trim()) {
+      return res.status(400).json({ error: 'github_pat is required' });
+    }
+
+    // Validate the PAT format (should start with github_pat_ or ghp_)
+    const pat = github_pat.trim();
+    if (!pat.startsWith('github_pat_') && !pat.startsWith('ghp_')) {
+      return res.status(400).json({
+        error: 'Invalid PAT format. GitHub PATs start with github_pat_ or ghp_'
+      });
+    }
+
+    // Test the PAT by making a simple request to GitHub Models API
+    try {
+      const testRes = await fetch('https://models.github.ai/inference/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${pat}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: 'Hi' }],
+          max_tokens: 5,
+        }),
+      });
+
+      if (!testRes.ok) {
+        const errBody = await testRes.text();
+        console.error('PAT validation failed:', testRes.status, errBody);
+
+        if (testRes.status === 401) {
+          return res.status(400).json({
+            error: 'Invalid PAT or PAT has expired. Please generate a new one.'
+          });
+        }
+        if (testRes.status === 403) {
+          return res.status(400).json({
+            error: 'PAT does not have models:read scope. Please create a new PAT with the models:read permission.'
+          });
+        }
+        return res.status(400).json({
+          error: `PAT validation failed: ${testRes.status}`
+        });
+      }
+    } catch (fetchErr) {
+      console.error('PAT validation error:', fetchErr);
+      return res.status(400).json({
+        error: 'Could not validate PAT. Check your internet connection and try again.'
+      });
+    }
+
+    // Save the PAT to the user's record
+    const { error: updateErr } = await supabase
+      .from('users')
+      .update({
+        github_access_token: pat,
+        // If we don't have a github_username yet, we can try to get it
+      })
+      .eq('id', req.userId);
+
+    if (updateErr) {
+      console.error('PAT save error:', updateErr);
+      return res.status(500).json({ error: 'Failed to save PAT' });
+    }
+
+    res.json({
+      success: true,
+      message: 'GitHub PAT saved successfully. AI proxy is now enabled for your devices!',
+      has_copilot_proxy: true,
+    });
+  } catch (error) {
+    console.error('Save PAT error:', error);
+    res.status(500).json({ error: 'Failed to save GitHub PAT' });
+  }
+});
+
+/**
+ * DELETE /api/auth/github-pat
+ * Remove the saved GitHub PAT (disable AI proxy)
+ */
+router.delete('/github-pat', authenticateUser, async (req, res) => {
+  try {
+    await supabase
+      .from('users')
+      .update({ github_access_token: null })
+      .eq('id', req.userId);
+
+    res.json({ success: true, message: 'GitHub PAT removed. AI proxy is now disabled.' });
+  } catch (error) {
+    console.error('Remove PAT error:', error);
+    res.status(500).json({ error: 'Failed to remove GitHub PAT' });
+  }
+});
+
+/**
+ * GET /api/auth/proxy-status
+ * Check if the current user has AI proxy enabled
+ */
+router.get('/proxy-status', authenticateUser, async (req, res) => {
+  try {
+    const { data: user } = await supabase
+      .from('users')
+      .select('github_access_token, github_username')
+      .eq('id', req.userId)
+      .single();
+
+    res.json({
+      has_copilot_proxy: !!(user && user.github_access_token),
+      github_username: user?.github_username || null,
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to check proxy status' });
+  }
+});
+
 module.exports = router;

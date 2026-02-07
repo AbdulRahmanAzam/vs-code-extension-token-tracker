@@ -15,6 +15,8 @@ export class ProxyCompletionProvider implements vscode.InlineCompletionItemProvi
   private enabled: boolean = false;
   private lastRequestTime: number = 0;
   private readonly DEBOUNCE_MS = 500; // Don't fire requests too fast
+  private consecutiveErrors: number = 0;
+  private readonly MAX_CONSECUTIVE_ERRORS = 3;
 
   // Model to use for inline completions (fast & cheap)
   private completionModel: string = 'gpt-4o-mini';
@@ -123,8 +125,21 @@ export class ProxyCompletionProvider implements vscode.InlineCompletionItemProvi
 
       return [item];
     } catch (err: any) {
-      // Don't show errors for every keystroke — just log silently
-      console.log('[TokenTracker] Inline completion error:', err?.message || err);
+      this.consecutiveErrors++;
+      const errMsg = err?.message || err?.error || String(err);
+      console.error('[TokenTracker] Inline completion error:', errMsg);
+
+      // If we get too many consecutive errors, temporarily disable to avoid spam
+      if (this.consecutiveErrors >= this.MAX_CONSECUTIVE_ERRORS) {
+        console.warn('[TokenTracker] Too many consecutive errors, pausing completions for 60s');
+        this.enabled = false;
+        setTimeout(() => {
+          this.enabled = true;
+          this.consecutiveErrors = 0;
+          console.log('[TokenTracker] Re-enabling completions after pause');
+        }, 60000);
+      }
+
       return undefined;
     }
   }
