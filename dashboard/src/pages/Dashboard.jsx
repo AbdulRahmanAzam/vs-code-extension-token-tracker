@@ -35,6 +35,11 @@ export default function Dashboard({ onLogout }) {
   const [busyDevices, setBusyDevices] = useState(new Set());
   const [busyKeys, setBusyKeys] = useState(new Set());
 
+  // GitHub PAT / Proxy settings
+  const [githubPat, setGithubPat] = useState('');
+  const [proxyStatus, setProxyStatus] = useState({ available: false, github_username: null });
+  const [patLoading, setPatLoading] = useState(false);
+
   const currentUser = api.getUser();
   const isAdmin = api.isAdmin();
   const mountedRef = useRef(true);
@@ -83,6 +88,52 @@ export default function Dashboard({ onLogout }) {
       fetchAdminData();
     }
   }, [activeTab, isAdmin, fetchAdminData]);
+
+  // Fetch proxy status on mount and when settings tab is active
+  const fetchProxyStatus = useCallback(async () => {
+    try {
+      const status = await api.getProxyStatus();
+      if (mountedRef.current) setProxyStatus(status);
+    } catch (err) {
+      console.error('Proxy status error:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchProxyStatus();
+  }, [fetchProxyStatus]);
+
+  // PAT handlers
+  const handleSaveGitHubPat = async () => {
+    if (!githubPat.trim()) {
+      toast.error('Please enter a GitHub PAT');
+      return;
+    }
+    setPatLoading(true);
+    try {
+      await api.saveGitHubPat(githubPat.trim());
+      toast.success('GitHub PAT saved! AI proxy is now enabled.');
+      setGithubPat('');
+      fetchProxyStatus();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setPatLoading(false);
+    }
+  };
+
+  const handleRemoveGitHubPat = async () => {
+    setPatLoading(true);
+    try {
+      await api.removeGitHubPat();
+      toast.success('GitHub PAT removed. AI proxy is now disabled.');
+      fetchProxyStatus();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setPatLoading(false);
+    }
+  };
 
   // ─── Helpers ───────────────────
   /** Background sync after any mutation — don't touch UI until data arrives */
@@ -332,6 +383,7 @@ export default function Dashboard({ onLogout }) {
   const tabs = [
     { key: 'devices', label: '⬡ My Devices', count: devices.length },
     { key: 'keys', label: '🔑 Token Keys', count: token_keys?.length },
+    { key: 'settings', label: '⚙ Settings' },
   ];
   if (isAdmin) {
     tabs.push({ key: 'admin', label: '🛡 Admin Panel' });
@@ -656,6 +708,131 @@ export default function Dashboard({ onLogout }) {
                 </table>
               </div>
             )}
+          </>
+        )}
+
+        {/* ─── Tab: Settings ─── */}
+        {activeTab === 'settings' && (
+          <>
+            <div className="section-header">
+              <h2>⚙ Settings</h2>
+            </div>
+
+            {/* Proxy Status Card */}
+            <div className="card" style={{ marginBottom: '20px' }}>
+              <h3 style={{ marginBottom: '16px', fontSize: '14px', fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>
+                AI_PROXY_STATUS
+              </h3>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                padding: '16px',
+                borderRadius: 'var(--radius-sm)',
+                background: proxyStatus.available ? 'var(--green-dim)' : 'var(--red-dim)',
+                border: `1px solid ${proxyStatus.available ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+              }}>
+                <span style={{
+                  width: '12px', height: '12px', borderRadius: '50%',
+                  background: proxyStatus.available ? 'var(--green)' : 'var(--red)',
+                  boxShadow: `0 0 8px ${proxyStatus.available ? 'var(--green)' : 'var(--red)'}`,
+                }} />
+                <div>
+                  <div style={{ fontWeight: 700, color: proxyStatus.available ? 'var(--green)' : 'var(--red)' }}>
+                    {proxyStatus.available ? '✅ AI Proxy Enabled' : '❌ AI Proxy Disabled'}
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                    {proxyStatus.available
+                      ? `Connected as ${proxyStatus.github_username || 'GitHub User'}. Your devices can use AI models without signing in to GitHub.`
+                      : 'Add your GitHub PAT below to enable AI proxy for your devices.'}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* GitHub PAT Input */}
+            <div className="card" style={{ marginBottom: '20px' }}>
+              <h3 style={{ marginBottom: '16px', fontSize: '14px', fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>
+                GITHUB_PERSONAL_ACCESS_TOKEN
+              </h3>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                To enable AI proxy, you need a GitHub Personal Access Token with the <code style={{ background: 'var(--bg-input)', padding: '2px 6px', borderRadius: '4px' }}>models:read</code> scope.
+                This allows your devices to use AI models (like GPT-4o, Claude) through the Token Tracker proxy without signing in to GitHub on each device.
+              </p>
+
+              {proxyStatus.available ? (
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                  <span className="badge green" style={{ fontSize: '11px' }}>PAT CONFIGURED</span>
+                  <button
+                    className="btn btn-sm btn-danger"
+                    onClick={handleRemoveGitHubPat}
+                    disabled={patLoading}
+                  >
+                    {patLoading ? <span className="spinner" /> : '🗑 Remove PAT'}
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                  <div className="form-group" style={{ flex: 1, minWidth: '300px' }}>
+                    <label className="form-label">GitHub PAT</label>
+                    <input
+                      type="password"
+                      className="form-input"
+                      value={githubPat}
+                      onChange={e => setGithubPat(e.target.value)}
+                      placeholder="github_pat_xxxxxxxxxxxx..."
+                      style={{ fontFamily: 'var(--font-mono)', fontSize: '12px' }}
+                    />
+                  </div>
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleSaveGitHubPat}
+                    disabled={patLoading || !githubPat.trim()}
+                    style={{ height: '42px', padding: '0 20px' }}
+                  >
+                    {patLoading ? <span className="spinner" /> : '🔐 Save PAT'}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* How to create PAT */}
+            <div className="card" style={{ marginBottom: '20px' }}>
+              <h3 style={{ marginBottom: '16px', fontSize: '14px', fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>
+                📋 HOW_TO_CREATE_GITHUB_PAT
+              </h3>
+              <div style={{ display: 'grid', gap: '12px' }}>
+                {[
+                  { num: '1', title: 'Go to GitHub Settings', desc: 'Open github.com → Click your avatar → Settings → Developer settings → Personal access tokens → Fine-grained tokens' },
+                  { num: '2', title: 'Create New Token', desc: 'Click "Generate new token" → Give it a name like "Token Tracker"' },
+                  { num: '3', title: 'Set Permissions', desc: 'Under "Permissions", find "Models" and set it to "Read" access' },
+                  { num: '4', title: 'Generate & Copy', desc: 'Click "Generate token" → Copy the token (starts with github_pat_)' },
+                  { num: '5', title: 'Paste Here', desc: 'Paste the token in the field above and click "Save PAT"' },
+                ].map(step => (
+                  <div key={step.num} style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                    <div style={{
+                      width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0,
+                      background: 'var(--accent-dim)', border: '1px solid var(--accent)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: '12px', fontWeight: 700, color: 'var(--accent)', fontFamily: 'var(--font-mono)'
+                    }}>{step.num}</div>
+                    <div>
+                      <strong style={{ fontSize: '13px' }}>{step.title}</strong>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>{step.desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <a
+                href="https://github.com/settings/tokens?type=beta"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-primary"
+                style={{ marginTop: '16px', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+              >
+                🔗 Open GitHub Token Settings
+              </a>
+            </div>
           </>
         )}
 
