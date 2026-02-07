@@ -162,11 +162,20 @@ async function enterTokenKey() {
     if (result.has_copilot_proxy) {
       completionProvider.setEnabled(true);
       vscode.window.showInformationMessage(
-        `🎫 Token Tracker activated! Owner: ${result.owner}. AI proxy enabled — you have access to Copilot models. ${result.allocation.remaining}/${result.allocation.allocated} tokens this month.`
+        `🎫 Token Tracker activated! Owner: ${result.owner}. ${result.allocation.remaining}/${result.allocation.allocated} tokens.`,
+        'Use @tokenTracker'
+      ).then(selection => {
+        if (selection === 'Use @tokenTracker') {
+          vscode.commands.executeCommand('workbench.action.chat.open', { query: '@tokenTracker ' });
+        }
+      });
+      // Show additional tip about how to use
+      vscode.window.showInformationMessage(
+        '✨ AI Proxy enabled! Use @tokenTracker in chat or wait for inline completions. No GitHub sign-in needed!'
       );
     } else {
       vscode.window.showInformationMessage(
-        `🎫 Token Tracker activated! Owner: ${result.owner}. ${result.allocation.remaining}/${result.allocation.allocated} tokens this month. (AI proxy not available — owner must sign in via GitHub on dashboard)`
+        `🎫 Token Tracker activated! Owner: ${result.owner}. ${result.allocation.remaining}/${result.allocation.allocated} tokens. (AI proxy not available — owner must add GitHub PAT in dashboard Settings)`
       );
     }
 

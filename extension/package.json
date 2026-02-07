@@ -2,7 +2,7 @@
   "name": "token-tracker-extension",
   "displayName": "Token Tracker - Copilot Usage Limiter",
   "description": "Track and limit GitHub Copilot token usage with centralized monthly budgets, per-user allocations, real-time monitoring, automatic blocking, and AI proxy — share your GitHub Copilot access across devices with a single token key.",
-  "version": "2.1.3",
+  "version": "2.1.4",
   "publisher": "Abdul-Rahman-Azam",
   "license": "MIT",
   "icon": "icon.png",
