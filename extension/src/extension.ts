@@ -200,6 +200,25 @@ async function initProxyFeatures() {
     if (status.available) {
       completionProvider.setEnabled(true);
       console.log('[TokenTracker] AI proxy enabled — inline completions active');
+      
+      // Check if GitHub Copilot is signed in
+      try {
+        const hasNativeModels = vscode.lm && await vscode.lm.selectChatModels().then(m => m.length > 0);
+        
+        if (!hasNativeModels) {
+          // No native Copilot models, but proxy is available
+          vscode.window.showInformationMessage(
+            '⚡ Token Tracker: AI models available via proxy! Use @tokenTracker in chat or get inline completions without GitHub sign-in.',
+            'Try @tokenTracker'
+          ).then(selection => {
+            if (selection === 'Try @tokenTracker') {
+              vscode.commands.executeCommand('workbench.action.chat.open', { query: '@tokenTracker' });
+            }
+          });
+        }
+      } catch {
+        // Ignore - LM API might not be available
+      }
     } else {
       completionProvider.setEnabled(false);
       console.log('[TokenTracker] AI proxy not available — owner has no GitHub token stored');
@@ -339,6 +358,19 @@ async function showBalance() {
 
   const models = getKnownModels();
 
+  // Get proxy status and available models
+  let proxyStatus: { available: boolean; github_username: string | null } = { available: false, github_username: null };
+  let proxyModels: any[] = [];
+  try {
+    proxyStatus = await api.getProxyStatus();
+    if (proxyStatus.available) {
+      const modelsResponse = await api.getProxyModels();
+      proxyModels = modelsResponse.models || [];
+    }
+  } catch (err) {
+    console.log('[TokenTracker] Could not fetch proxy models:', err);
+  }
+
   const panel = vscode.window.createWebviewPanel(
     'tokenBalance',
     'Token Balance',
@@ -348,6 +380,10 @@ async function showBalance() {
 
   const barWidth = cached.allocated > 0 ? Math.round((cached.used / cached.allocated) * 100) : 0;
   const barColor = barWidth >= 90 ? '#e74c3c' : barWidth >= 70 ? '#f39c12' : '#2ecc71';
+
+  const proxyModelsList = proxyModels.length > 0
+    ? proxyModels.map(m => `<tr><td>${m.name}</td><td>${m.provider}</td><td class="${m.cost === 0 ? 'free' : m.cost >= 3 ? 'premium' : ''}">${m.cost === 0 ? 'FREE' : m.cost + ' token(s)'}</td></tr>`).join('')
+    : '<tr><td colspan="3" style="opacity:0.5; text-align:center;">AI proxy not available</td></tr>';
 
   panel.webview.html = `
     <!DOCTYPE html>
@@ -372,6 +408,9 @@ async function showBalance() {
         .status.blocked { background: #8e44ad; color: white; }
         .info-banner { background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-widget-border); border-radius: 8px; padding: 14px 20px; margin-bottom: 16px; display: flex; align-items: center; gap: 12px; }
         .info-icon { width: 36px; height: 36px; border-radius: 50%; background: var(--vscode-button-background); display: flex; align-items: center; justify-content: center; font-size: 18px; }
+        .proxy-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; background: #2ecc71; color: white; }
+        .proxy-badge.inactive { background: #95a5a6; }
+        .hint { margin-top: 12px; padding: 12px; background: rgba(100, 200, 255, 0.1); border-left: 3px solid #64c8ff; border-radius: 4px; font-size: 13px; }
       </style>
     </head>
     <body>
@@ -386,7 +425,12 @@ async function showBalance() {
       </div>
       
       <div class="card">
-        <h3>Balance — ${cached.month || 'Current Month'}</h3>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <h3 style="margin:0;">Balance — ${cached.month || 'Current Month'}</h3>
+          ${proxyStatus.available 
+            ? '<span class="proxy-badge">⚡ AI Proxy Active</span>' 
+            : '<span class="proxy-badge inactive">AI Proxy Offline</span>'}
+        </div>
         <div class="bar-container">
           <div class="bar" style="width: ${Math.max(barWidth, 2)}%; background: ${barColor};">${barWidth}%</div>
         </div>
@@ -405,8 +449,21 @@ async function showBalance() {
         </div>
       </div>
 
+      ${proxyStatus.available ? `
+        <div class="card">
+          <h3>⚡ AI Proxy Models (Available without GitHub sign-in)</h3>
+          <table class="cost-table">
+            <tr><th>Model</th><th>Provider</th><th>Cost / Prompt</th></tr>
+            ${proxyModelsList}
+          </table>
+          <div class="hint">
+            💡 <strong>Tip:</strong> Use <code>@tokenTracker</code> in chat to ask coding questions, or simply start typing to get inline AI completions — no GitHub sign-in required!
+          </div>
+        </div>
+      ` : ''}
+
       <div class="card">
-        <h3>Model Costs</h3>
+        <h3>Model Costs (Standard Tracking)</h3>
         <table class="cost-table">
           <tr><th>Model</th><th>Cost / Prompt</th></tr>
           ${models.map(m => `<tr><td>${m.name}</td><td class="${m.cost === 0 ? 'free' : m.cost >= 3 ? 'premium' : ''}">${m.cost === 0 ? 'FREE' : m.cost + ' token(s)'}</td></tr>`).join('')}

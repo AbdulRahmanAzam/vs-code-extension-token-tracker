@@ -17,7 +17,6 @@ export interface ModelInfo {
 /** Patterns that identify free models (0 tokens) */
 const FREE_PATTERNS: string[] = [
   'gpt-5-mini', 'gpt5-mini', 'gpt-5mini', 'gpt-4o-mini',
-  'grok-code-fast', 'grokcodefast',
 ];
 
 /** Pattern that identifies Opus 4.5 (3 tokens) */
@@ -74,9 +73,10 @@ export function getKnownModels(): { name: string; cost: number }[] {
     { name: 'claude-sonnet', cost: 1 },
     { name: 'gpt-4', cost: 1 },
     { name: 'gpt-4o', cost: 1 },
+    { name: 'grok-code-fast-1', cost: 1 },
     { name: 'copilot', cost: 1 },
     { name: 'gemini', cost: 1 },
     { name: 'gpt-5-mini', cost: 0 },
-    { name: 'grok-code-fast-1', cost: 0 },
+    { name: 'gpt-4o-mini', cost: 0 },
   ];
 }

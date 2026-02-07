@@ -82,7 +82,6 @@ function getCurrentMonth() {
  */
 const FREE_MODELS = [
   'gpt-5-mini', 'gpt5-mini', 'gpt-5mini',
-  'grok-code-fast-1', 'grok-code-fast', 'grokcodefast',
   'gpt-4o-mini',
 ];
 
@@ -96,9 +95,9 @@ function isModelFree(modelType) {
 
 /**
  * Calculate tokens based on model type
- * Free models (gpt-5-mini, grok-code-fast-1) = 0 tokens
+ * Free models (gpt-5-mini, gpt-4o-mini) = 0 tokens
  * Claude Opus 4.5 = 3 tokens per prompt
- * All other models = 1 token per prompt
+ * All other models (including grok-code-fast) = 1 token per prompt
  */
 function calculateTokens(modelType, promptCount = 1) {
   const model = modelType.toLowerCase();
