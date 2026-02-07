@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="media/banner.png" alt="Token Tracker Banner" width="700"/>
+  <img src="https://raw.githubusercontent.com/AbdulRahmanAzam/vs-code-extension-token-tracker/main/extension/media/banner.png" alt="Token Tracker Banner" width="700"/>
 </p>
 
 <p align="center">
@@ -29,7 +29,7 @@ A **centralized token management system** that monitors every GitHub Copilot int
 The extension adds a **real-time token counter** to your VS Code status bar — always visible, always synced.
 
 <p align="center">
-  <img src="media/statusbar.png" alt="Status Bar Preview" width="700"/>
+  <img src="https://raw.githubusercontent.com/AbdulRahmanAzam/vs-code-extension-token-tracker/main/extension/media/statusbar.png" alt="Status Bar Preview" width="700"/>
 </p>
 
 ---
@@ -52,7 +52,7 @@ The extension adds a **real-time token counter** to your VS Code status bar — 
 ## 🌑 Dashboard — Dark Mode
 
 <p align="center">
-  <img src="media/dashboard-dark.png" alt="Dashboard Dark Mode" width="800"/>
+  <img src="https://raw.githubusercontent.com/AbdulRahmanAzam/vs-code-extension-token-tracker/main/extension/media/dashboard-dark.png" alt="Dashboard Dark Mode" width="800"/>
 </p>
 
 ---
@@ -60,7 +60,7 @@ The extension adds a **real-time token counter** to your VS Code status bar — 
 ## 🌕 Dashboard — Light Mode
 
 <p align="center">
-  <img src="media/dashboard-light.png" alt="Dashboard Light Mode" width="800"/>
+  <img src="https://raw.githubusercontent.com/AbdulRahmanAzam/vs-code-extension-token-tracker/main/extension/media/dashboard-light.png" alt="Dashboard Light Mode" width="800"/>
 </p>
 
 ---
@@ -68,7 +68,7 @@ The extension adds a **real-time token counter** to your VS Code status bar — 
 ## 🔐 Secure Login
 
 <p align="center">
-  <img src="media/login.png" alt="Login Screen" width="400"/>
+  <img src="https://raw.githubusercontent.com/AbdulRahmanAzam/vs-code-extension-token-tracker/main/extension/media/login.png" alt="Login Screen" width="400"/>
 </p>
 
 ---
@@ -76,7 +76,7 @@ The extension adds a **real-time token counter** to your VS Code status bar — 
 ## 🏗️ Architecture
 
 <p align="center">
-  <img src="media/architecture.png" alt="System Architecture" width="800"/>
+  <img src="https://raw.githubusercontent.com/AbdulRahmanAzam/vs-code-extension-token-tracker/main/extension/media/architecture.png" alt="System Architecture" width="800"/>
 </p>
 
 ---
@@ -110,6 +110,20 @@ cd dashboard
 npm install && npm run dev
 ```
 Open `http://localhost:5173` → Login with admin credentials → Manage!
+
+---
+
+## 🔄 Changing Your Token Key
+
+If you need to switch to a different token key (e.g., after regenerating keys on the dashboard):
+
+1. **Open Command Palette** (`Ctrl+Shift+P` / `Cmd+Shift+P`)
+2. Run: `Token Tracker: Remove Token Key & Reset`
+3. Confirm the deactivation
+4. Run: `Token Tracker: Enter Token Key`
+5. Paste your new token key from the dashboard
+
+Your extension will be reactivated with the new token and allocation.
 
 ---
 
@@ -165,5 +179,5 @@ Open `http://localhost:5173` → Login with admin credentials → Manage!
 
 <p align="center">
   <sub>Made with ⚡ by <strong>Abdul Rahman Azam</strong></sub><br/>
-  <sub>Token Tracker v1.0.2 · MIT License</sub>
+  <sub>Token Tracker v2.1.1 · MIT License</sub>
 </p>
